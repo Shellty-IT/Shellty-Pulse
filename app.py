@@ -5,13 +5,14 @@ Narzędzie do monitorowania dostępności usług webowych.
 Pełni jednocześnie funkcję keep-alive dla backendów na Render Free Tier
 (które usypiają po 15 min bez ruchu).
 
-Funkcje:
-    - Pinguje zarejestrowane URL-e co X minut (konfigurowalne)
-    - Mierzy czas odpowiedzi i zapisuje status
-    - Wyświetla dashboard HTML na stronie głównej
-    - Udostępnia REST API do zarządzania serwisami
+Features:
+    - Pings registered URLs every X minutes (configurable)
+    - Measures response time and records status
+    - Displays HTML dashboard on the main page
+    - Provides REST API for service management
+    - Configurable ping interval from dashboard (10m / 15m / 30m / 1h)
 
-Autor: Shellty IT
+Author: Shellty IT
 """
 
 # ============================================
@@ -42,9 +43,19 @@ logger = logging.getLogger("shellty-pulse")
 # ============================================
 # Configuration from Environment Variables
 # ============================================
-PING_INTERVAL = int(os.environ.get("PING_INTERVAL", 600))      # seconds between auto-checks
-REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 10))    # timeout per request
+REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 10))    # timeout per request in seconds
 SERVICES_JSON = os.environ.get("SERVICES", "[]")                # preloaded services JSON
+
+# Mutable ping interval — can be changed via API at runtime
+ping_interval: int = int(os.environ.get("PING_INTERVAL", 600))
+
+# Available intervals for the dashboard selector (seconds → label)
+AVAILABLE_INTERVALS = {
+    600: "10 min",
+    900: "15 min",
+    1800: "30 min",
+    3600: "1 hour",
+}
 
 # ============================================
 # In-Memory Data Store
@@ -53,6 +64,9 @@ services: list[dict] = []
 services_lock = threading.Lock()
 auto_ping_enabled: bool = True
 last_check_time: str | None = None
+
+# Global scheduler reference (initialized in start_app)
+scheduler: BackgroundScheduler | None = None
 
 # ============================================
 # Dashboard HTML Template
@@ -63,6 +77,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shellty Pulse</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💓</text></svg>">
     <style>
         /* === Reset & Base === */
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -103,7 +118,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             text-align: center;
             padding: 1rem 2rem;
             border-radius: 12px;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
             font-size: 1.1rem;
             font-weight: 600;
             border: 1px solid #30363d;
@@ -114,6 +129,43 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         .overall-status.slow        { background: #1f160d; border-color: #bd5a00; color: #db6d28; }
         .overall-status.down        { background: #1f0d0d; border-color: #da3633; color: #f85149; }
         .overall-status.unknown     { background: #161b22; border-color: #30363d; color: #8b949e; }
+
+        /* === Status Legend === */
+        .status-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem 1.25rem;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            padding: 0.6rem 1rem;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            font-size: 0.8rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: #8b949e;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .legend-dot.operational { background: #3fb950; }
+        .legend-dot.degraded    { background: #d29922; }
+        .legend-dot.slow        { background: #db6d28; }
+        .legend-dot.down        { background: #f85149; }
+        .legend-dot.unknown     { background: #484f58; }
+
+        .legend-desc { color: #6e7681; }
 
         /* === Control Buttons === */
         .controls {
@@ -136,12 +188,42 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             transition: all 0.2s;
         }
 
-        .btn:hover         { background: #30363d; border-color: #58a6ff; }
-        .btn:disabled       { opacity: 0.5; cursor: not-allowed; }
-        .btn.primary        { background: #238636; border-color: #238636; color: #fff; }
-        .btn.primary:hover  { background: #2ea043; }
-        .btn.active         { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-        .btn.inactive       { background: #21262d; border-color: #f85149; color: #f85149; }
+        .btn:hover          { background: #30363d; border-color: #58a6ff; }
+        .btn:disabled        { opacity: 0.5; cursor: not-allowed; }
+        .btn.primary         { background: #238636; border-color: #238636; color: #fff; }
+        .btn.primary:hover   { background: #2ea043; }
+        .btn.active          { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+        .btn.inactive        { background: #21262d; border-color: #f85149; color: #f85149; }
+
+        /* === Interval Selector === */
+        .interval-selector {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+
+        .interval-label {
+            color: #8b949e;
+            font-size: 0.8rem;
+            margin-right: 0.2rem;
+        }
+
+        .interval-btn {
+            padding: 0.3rem 0.65rem;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            background: #21262d;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 0.78rem;
+            transition: all 0.2s;
+        }
+
+        .interval-btn:hover        { border-color: #58a6ff; color: #c9d1d9; }
+        .interval-btn.active        { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+        .interval-btn:disabled       { opacity: 0.4; cursor: not-allowed; }
+        .interval-btn:disabled:hover { border-color: #30363d; color: #8b949e; }
 
         .check-info {
             color: #8b949e;
@@ -261,6 +343,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         .form-row input:focus       { outline: none; border-color: #58a6ff; }
         .form-row input::placeholder { color: #484f58; }
 
+        .add-note {
+            margin-top: 0.6rem;
+            font-size: 0.75rem;
+            color: #6e7681;
+            font-style: italic;
+        }
+
         /* === Footer === */
         footer {
             text-align: center;
@@ -278,6 +367,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             .service-card { flex-wrap: wrap; }
             .service-meta { flex-direction: row; align-items: center; width: 100%; }
             .service-actions { width: 100%; justify-content: flex-end; }
+            .status-legend { font-size: 0.72rem; gap: 0.5rem 0.75rem; }
         }
     </style>
 </head>
@@ -292,12 +382,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <!-- Overall Status Banner -->
         <div id="overall-status" class="overall-status unknown">Loading...</div>
 
+        <!-- Status Legend -->
+        <div class="status-legend">
+            <span class="legend-item"><span class="legend-dot operational"></span> Operational <span class="legend-desc">(&lt; 1s)</span></span>
+            <span class="legend-item"><span class="legend-dot degraded"></span> Degraded <span class="legend-desc">(1-3s)</span></span>
+            <span class="legend-item"><span class="legend-dot slow"></span> Slow <span class="legend-desc">(&gt; 3s)</span></span>
+            <span class="legend-item"><span class="legend-dot down"></span> Down <span class="legend-desc">(error/timeout)</span></span>
+            <span class="legend-item"><span class="legend-dot unknown"></span> Unknown <span class="legend-desc">(not checked)</span></span>
+        </div>
+
         <!-- Control Buttons -->
         <div class="controls">
             <button class="btn primary" onclick="checkAll(this)">⟳ Check All Now</button>
             <button id="auto-ping-btn" class="btn active" onclick="toggleAutoPing()">
                 ⏱ Auto-Ping: ON
             </button>
+            <div class="interval-selector">
+                <span class="interval-label">Interval:</span>
+                <button class="interval-btn" data-interval="600" onclick="setPingInterval(600)">10 min</button>
+                <button class="interval-btn" data-interval="900" onclick="setPingInterval(900)">15 min</button>
+                <button class="interval-btn" data-interval="1800" onclick="setPingInterval(1800)">30 min</button>
+                <button class="interval-btn" data-interval="3600" onclick="setPingInterval(3600)">1 hour</button>
+            </div>
             <div id="check-info" class="check-info">Loading...</div>
         </div>
 
@@ -314,6 +420,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <input type="text" id="new-url" placeholder="Health check URL (https://...)" />
                 <button class="btn primary" onclick="addService()">Add</button>
             </div>
+            <p class="add-note">⚠ Services added here are stored in memory and will be reset on container restart.
+            To add permanently, update the SERVICES variable in docker-compose.yml.</p>
         </div>
 
         <footer>Shellty Pulse v1.0 &mdash; Service Health Monitor by Shellty IT</footer>
@@ -323,14 +431,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         /* ========================================
          * Constants & Status Helpers
          * ======================================== */
-        const REFRESH_INTERVAL = 15000;
+        var REFRESH_INTERVAL = 15000;
 
-        const STATUS_CONFIG = {
-            operational: { icon: '🟢', label: 'Operational' },
-            degraded:    { icon: '🟡', label: 'Degraded' },
-            slow:        { icon: '🟠', label: 'Slow' },
-            down:        { icon: '🔴', label: 'Down' },
-            unknown:     { icon: '⚪', label: 'Unknown' }
+        var STATUS_CONFIG = {
+            operational: { icon: '🟢', label: 'All Systems Operational' },
+            degraded:    { icon: '🟡', label: 'Performance Degraded' },
+            slow:        { icon: '🟠', label: 'Slow Response Detected' },
+            down:        { icon: '🔴', label: 'Service Outage Detected' },
+            unknown:     { icon: '⚪', label: 'Status Unknown' }
         };
 
         function getStatusConfig(status) {
@@ -368,6 +476,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             var d = document.createElement('div');
             d.textContent = text;
             return d.innerHTML;
+        }
+
+        function intervalLabel(seconds) {
+            if (seconds >= 3600) return Math.round(seconds / 3600) + 'h';
+            return Math.round(seconds / 60) + ' min';
         }
 
         /* ========================================
@@ -417,6 +530,24 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             }
         }
 
+        async function setPingInterval(seconds) {
+            try {
+                var res = await fetch('/api/ping-interval', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ interval: seconds })
+                });
+                if (res.ok) {
+                    await fetchServices();
+                } else {
+                    var errData = await res.json();
+                    alert(errData.error || 'Failed to set interval.');
+                }
+            } catch (err) {
+                console.error('Set interval failed:', err);
+            }
+        }
+
         async function addService() {
             var nameVal = document.getElementById('new-name').value.trim();
             var urlVal  = document.getElementById('new-url').value.trim();
@@ -462,7 +593,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             var oel = document.getElementById('overall-status');
             var ocfg = getStatusConfig(meta.overall_status);
             oel.className = 'overall-status ' + meta.overall_status;
-            oel.textContent = ocfg.icon + ' Overall: ' + ocfg.label;
+            oel.textContent = ocfg.icon + ' ' + ocfg.label;
 
             /* Auto-ping button */
             var apb = document.getElementById('auto-ping-btn');
@@ -474,20 +605,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 apb.textContent = '⏱ Auto-Ping: OFF';
             }
 
+            /* Interval buttons — highlight active, disable when auto-ping off */
+            var intervalBtns = document.querySelectorAll('.interval-btn');
+            intervalBtns.forEach(function(btn) {
+                var btnInterval = parseInt(btn.getAttribute('data-interval'));
+                btn.classList.toggle('active', btnInterval === meta.ping_interval);
+                btn.disabled = !meta.auto_ping_enabled;
+            });
+
             /* Check info line */
             var ci = document.getElementById('check-info');
-            var intMin = Math.round(meta.ping_interval / 60);
+            var intLabel = intervalLabel(meta.ping_interval);
             if (meta.last_check) {
                 var ago = timeAgo(meta.last_check);
                 if (meta.auto_ping_enabled) {
                     var elapsed = (Date.now() - new Date(meta.last_check).getTime()) / 1000;
                     var remain  = Math.max(0, Math.round((meta.ping_interval - elapsed) / 60));
-                    ci.textContent = 'Last check: ' + ago + ' · Next in: ~' + remain + ' min · Interval: ' + intMin + ' min';
+                    ci.textContent = 'Last check: ' + ago + ' · Next in: ~' + remain + ' min · Auto-ping every ' + intLabel;
                 } else {
-                    ci.textContent = 'Last check: ' + ago + ' · Auto-ping disabled · Interval: ' + intMin + ' min';
+                    ci.textContent = 'Last check: ' + ago + ' · Auto-ping disabled';
                 }
             } else {
-                ci.textContent = 'No checks yet · Interval: ' + intMin + ' min';
+                ci.textContent = 'No checks yet · Auto-ping every ' + intLabel;
             }
 
             /* Services grid */
@@ -778,7 +917,7 @@ def get_services():
         "meta": {
             "overall_status": get_overall_status(),
             "auto_ping_enabled": auto_ping_enabled,
-            "ping_interval": PING_INTERVAL,
+            "ping_interval": ping_interval,
             "last_check": last_check_time,
             "total_services": len(services_data),
         },
@@ -893,17 +1032,61 @@ def toggle_auto_ping():
     })
 
 
+@app.route("/api/ping-interval", methods=["POST"])
+def set_ping_interval():
+    """
+    Change the auto-ping interval.
+
+    Accepts JSON: {"interval": 600}
+    Valid values: 600 (10 min), 900 (15 min), 1800 (30 min), 3600 (1 hour).
+    Reschedules the background job immediately.
+    """
+    global ping_interval
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Request body must be valid JSON."}), 400
+
+    new_interval = data.get("interval")
+    if new_interval not in AVAILABLE_INTERVALS:
+        valid = [f"{v} ({k}s)" for k, v in AVAILABLE_INTERVALS.items()]
+        return jsonify({
+            "error": f"Invalid interval. Valid options: {', '.join(valid)}"
+        }), 400
+
+    ping_interval = new_interval
+
+    # Reschedule background job with new interval
+    if scheduler:
+        scheduler.reschedule_job(
+            "health_check_job",
+            trigger="interval",
+            seconds=ping_interval,
+        )
+
+    label = AVAILABLE_INTERVALS[ping_interval]
+    logger.info("Ping interval changed to %s (%ds)", label, ping_interval)
+
+    return jsonify({
+        "interval": ping_interval,
+        "label": label,
+        "message": f"Auto-ping interval set to {label}.",
+    })
+
+
 # ============================================
 # Application Entry Point
 # ============================================
 
 def start_app():
     """Initialize services, start scheduler, run Flask server."""
+    global scheduler
+
     logger.info("=" * 50)
     logger.info("  Starting Shellty Pulse — Service Health Monitor")
     logger.info("=" * 50)
     logger.info("Configuration:")
-    logger.info("  PING_INTERVAL:   %d seconds (%d min)", PING_INTERVAL, PING_INTERVAL // 60)
+    logger.info("  PING_INTERVAL:   %d seconds (%d min)", ping_interval, ping_interval // 60)
     logger.info("  REQUEST_TIMEOUT: %d seconds", REQUEST_TIMEOUT)
 
     # Load services from SERVICES env var
@@ -914,13 +1097,13 @@ def start_app():
     scheduler.add_job(
         func=scheduled_check,
         trigger="interval",
-        seconds=PING_INTERVAL,
+        seconds=ping_interval,
         id="health_check_job",
         name="Periodic Health Check",
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("Scheduler started — checking every %d seconds.", PING_INTERVAL)
+    logger.info("Scheduler started — checking every %d seconds.", ping_interval)
 
     # Run initial check in background (non-blocking for fast startup)
     threading.Thread(target=check_all_services, daemon=True).start()
