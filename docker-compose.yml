@@ -1,0 +1,59 @@
+# ============================================
+# Shellty Pulse — Docker Compose Configuration
+# ============================================
+# Usage:
+#   docker-compose up --build        (foreground)
+#   docker-compose up --build -d     (detached/background)
+#   docker-compose down              (stop & remove)
+#   docker-compose logs -f monitor   (follow logs)
+# ============================================
+
+version: "3.8"
+
+services:
+  monitor:
+    # --- Build from local Dockerfile ---
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # --- Container settings ---
+    container_name: shellty-pulse
+    hostname: shellty-pulse
+
+    # --- Port mapping ---
+    ports:
+      - "5000:5000"
+
+    # --- Environment variables ---
+    environment:
+      # Interval between automatic health checks (seconds)
+      PING_INTERVAL: "600"
+
+      # Timeout for each HTTP request (seconds)
+      REQUEST_TIMEOUT: "10"
+
+      # Ensure Python logs appear immediately in docker logs
+      PYTHONUNBUFFERED: "1"
+
+      # Preloaded services — JSON array with name + full health check URL
+      SERVICES: >
+        [
+          {"name": "KSeF Master",   "url": "https://ksef-master-backend.onrender.com/health"},
+          {"name": "Postlio",       "url": "https://postlio-backend.onrender.com/health"},
+          {"name": "Shellty Blog",  "url": "https://shellty-blog.onrender.com/health"},
+          {"name": "SmartQuote AI", "url": "https://smartquote-backend-fzh5.onrender.com/api/health"}
+        ]
+
+    # --- Health check ---
+    # Overrides Dockerfile HEALTHCHECK for compose-level monitoring
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    # --- Restart policy ---
+    # Always restart unless manually stopped
+    restart: unless-stopped
