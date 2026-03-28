@@ -1,0 +1,192 @@
+# ============================================
+# Shellty Pulse — CI Pipeline (GitHub Actions)
+# ============================================
+# Triggers:
+#   - Push to main branch
+#   - Pull request to main branch
+#
+# Steps:
+#   1. Build Docker image
+#   2. Run container
+#   3. Wait for application startup
+#   4. Run health checks (3 endpoints)
+#   5. Show logs (for debugging)
+#   6. Cleanup
+# ============================================
+
+name: CI — Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Build Docker Image & Test Endpoints
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------
+      # Step 1: Checkout repository
+      # -----------------------------------------
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------
+      # Step 2: Build Docker image
+      # -----------------------------------------
+      - name: 🐳 Build Docker image
+        run: docker build -t shellty-pulse .
+
+      # -----------------------------------------
+      # Step 3: Run container in background
+      # -----------------------------------------
+      - name: 🚀 Start container
+        run: |
+          docker run -d \
+            --name monitor \
+            -p 5000:5000 \
+            -e PING_INTERVAL=600 \
+            -e REQUEST_TIMEOUT=10 \
+            -e PYTHONUNBUFFERED=1 \
+            -e SERVICES='[
+              {"name":"KSeF Master","url":"https://ksef-master-backend.onrender.com/health"},
+              {"name":"Postlio","url":"https://postlio-backend.onrender.com/health"},
+              {"name":"Shellty Blog","url":"https://shellty-blog.onrender.com/health"},
+              {"name":"SmartQuote AI","url":"https://smartquote-backend-fzh5.onrender.com/api/health"}
+            ]' \
+            shellty-pulse
+
+      # -----------------------------------------
+      # Step 4: Wait for application to start
+      # -----------------------------------------
+      - name: ⏳ Wait for application startup
+        run: |
+          echo "Waiting for Shellty Pulse to start..."
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+              echo "✅ Application is ready! (attempt $i)"
+              exit 0
+            fi
+            echo "  Attempt $i/15 — not ready yet, waiting 2s..."
+            sleep 2
+          done
+          echo "❌ Application failed to start within 30 seconds"
+          docker logs monitor
+          exit 1
+
+      # -----------------------------------------
+      # Step 5: Test /health endpoint
+      # -----------------------------------------
+      - name: 🏥 Test /health endpoint
+        run: |
+          echo "--- GET /health ---"
+          RESPONSE=$(curl -sf http://localhost:5000/health)
+          echo "$RESPONSE" | python3 -m json.tool
+          
+          # Verify response contains "ok" status
+          echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          assert data['status'] == 'ok', f'Expected status ok, got {data[\"status\"]}'
+          assert 'timestamp' in data, 'Missing timestamp field'
+          print('✅ /health — PASSED')
+          "
+
+      # -----------------------------------------
+      # Step 6: Test /api/services endpoint
+      # -----------------------------------------
+      - name: 📋 Test /api/services endpoint
+        run: |
+          echo "--- GET /api/services ---"
+          RESPONSE=$(curl -sf http://localhost:5000/api/services)
+          echo "$RESPONSE" | python3 -m json.tool
+          
+          # Verify response structure and preloaded services
+          echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          services = data['services']
+          meta = data['meta']
+          assert isinstance(services, list), 'Services should be a list'
+          assert len(services) == 4, f'Expected 4 preloaded services, got {len(services)}'
+          assert 'overall_status' in meta, 'Missing overall_status in meta'
+          assert 'auto_ping_enabled' in meta, 'Missing auto_ping_enabled in meta'
+          print(f'✅ /api/services — PASSED ({len(services)} services loaded)')
+          "
+
+      # -----------------------------------------
+      # Step 7: Test dashboard (GET /)
+      # -----------------------------------------
+      - name: 🖥️ Test dashboard endpoint
+        run: |
+          echo "--- GET / (dashboard) ---"
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:5000/)
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Dashboard — PASSED (HTTP $HTTP_CODE)"
+          else
+            echo "❌ Dashboard — FAILED (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+          
+          # Verify HTML contains key elements
+          BODY=$(curl -sf http://localhost:5000/)
+          echo "$BODY" | python3 -c "
+          import sys
+          html = sys.stdin.read()
+          assert 'Shellty Pulse' in html, 'Missing title'
+          assert 'services-grid' in html, 'Missing services grid'
+          assert 'Check All Now' in html, 'Missing Check All button'
+          print('✅ Dashboard HTML content — PASSED')
+          "
+
+      # -----------------------------------------
+      # Step 8: Test POST /api/services (add new)
+      # -----------------------------------------
+      - name: ➕ Test adding a new service
+        run: |
+          echo "--- POST /api/services ---"
+          RESPONSE=$(curl -sf -X POST http://localhost:5000/api/services \
+            -H "Content-Type: application/json" \
+            -d '{"name": "Test Service", "url": "https://httpbin.org/get"}')
+          echo "$RESPONSE" | python3 -m json.tool
+          
+          echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          assert data['name'] == 'Test Service', 'Wrong name'
+          assert data['url'] == 'https://httpbin.org/get', 'Wrong URL'
+          assert 'id' in data, 'Missing id'
+          print(f'✅ POST /api/services — PASSED (id: {data[\"id\"]})')
+          "
+          
+          # Verify count increased to 5
+          COUNT=$(curl -sf http://localhost:5000/api/services | python3 -c "
+          import sys, json
+          print(len(json.load(sys.stdin)['services']))
+          ")
+          echo "Total services after add: $COUNT"
+          [ "$COUNT" = "5" ] && echo "✅ Service count — PASSED" || exit 1
+
+      # -----------------------------------------
+      # Step 9: Show container logs (always, for debugging)
+      # -----------------------------------------
+      - name: 📜 Show container logs
+        if: always()
+        run: |
+          echo "=============================="
+          echo "  Container Logs"
+          echo "=============================="
+          docker logs monitor
+
+      # -----------------------------------------
+      # Step 10: Cleanup
+      # -----------------------------------------
+      - name: 🧹 Cleanup
+        if: always()
+        run: |
+          docker stop monitor || true
+          docker rm monitor || true

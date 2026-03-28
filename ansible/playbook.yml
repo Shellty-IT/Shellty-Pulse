@@ -1,0 +1,196 @@
+# ============================================
+# Shellty Pulse — Ansible Deployment Playbook
+# ============================================
+# Deploys Service Health Monitor as a Docker container.
+#
+# Usage:
+#   ansible-playbook ansible/playbook.yml -i inventory.ini
+#   ansible-playbook ansible/playbook.yml -i "localhost," -c local
+#
+# Requirements:
+#   - Target host has Python 3 installed
+#   - User has sudo privileges
+#   - Internet access (for apt packages and Docker image)
+# ============================================
+
+---
+- name: Deploy Shellty Pulse — Service Health Monitor
+  hosts: all
+  become: yes
+
+  # ----------------------------------------
+  # Variables
+  # ----------------------------------------
+  vars:
+    app_name: "shellty-pulse"
+    app_port: 5000
+    app_image: "shellty-pulse"
+    ping_interval: "600"
+    request_timeout: "10"
+    preloaded_services: >-
+      [
+        {"name":"KSeF Master","url":"https://ksef-master-backend.onrender.com/health"},
+        {"name":"Postlio","url":"https://postlio-backend.onrender.com/health"},
+        {"name":"Shellty Blog","url":"https://shellty-blog.onrender.com/health"},
+        {"name":"SmartQuote AI","url":"https://smartquote-backend-fzh5.onrender.com/api/health"}
+      ]
+
+  # ----------------------------------------
+  # Tasks
+  # ----------------------------------------
+  tasks:
+
+    # === Docker Installation ===
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      tags: [docker, setup]
+
+    - name: Install Docker dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+        state: present
+      tags: [docker, setup]
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+      tags: [docker, setup]
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+      tags: [docker, setup]
+
+    - name: Install Docker CE
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+        update_cache: yes
+      tags: [docker, setup]
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      tags: [docker, setup]
+
+    - name: Install Python Docker SDK (for Ansible docker modules)
+      pip:
+        name: docker
+        state: present
+      tags: [docker, setup]
+
+    # === Application Deployment ===
+
+    - name: Create application directory
+      file:
+        path: "/opt/{{ app_name }}"
+        state: directory
+        mode: "0755"
+      tags: [deploy]
+
+    - name: Copy application file
+      copy:
+        src: "../app.py"
+        dest: "/opt/{{ app_name }}/app.py"
+        mode: "0644"
+      tags: [deploy]
+
+    - name: Copy Dockerfile
+      copy:
+        src: "../Dockerfile"
+        dest: "/opt/{{ app_name }}/Dockerfile"
+        mode: "0644"
+      tags: [deploy]
+
+    - name: Build Docker image
+      community.docker.docker_image:
+        name: "{{ app_image }}"
+        tag: latest
+        source: build
+        build:
+          path: "/opt/{{ app_name }}"
+        force_source: yes
+      tags: [deploy]
+
+    - name: Stop and remove existing container (if any)
+      community.docker.docker_container:
+        name: "{{ app_name }}"
+        state: absent
+      tags: [deploy]
+
+    - name: Run Shellty Pulse container
+      community.docker.docker_container:
+        name: "{{ app_name }}"
+        image: "{{ app_image }}:latest"
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "{{ app_port }}:5000"
+        env:
+          PING_INTERVAL: "{{ ping_interval }}"
+          REQUEST_TIMEOUT: "{{ request_timeout }}"
+          PYTHONUNBUFFERED: "1"
+          SERVICES: "{{ preloaded_services }}"
+        healthcheck:
+          test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+          interval: 30s
+          timeout: 10s
+          retries: 3
+          start_period: 15s
+      tags: [deploy]
+
+    # === Verification ===
+
+    - name: Wait for application to become healthy
+      uri:
+        url: "http://localhost:{{ app_port }}/health"
+        method: GET
+        return_content: yes
+        status_code: 200
+      register: health_result
+      retries: 10
+      delay: 3
+      until: health_result.status == 200
+      tags: [verify]
+
+    - name: Display health check result
+      debug:
+        msg: >
+          ✅ Shellty Pulse is running!
+          Status: {{ health_result.json.status }}
+          Timestamp: {{ health_result.json.timestamp }}
+          Dashboard: http://{{ ansible_default_ipv4.address | default('localhost') }}:{{ app_port }}
+      tags: [verify]
+
+    - name: Verify services are loaded
+      uri:
+        url: "http://localhost:{{ app_port }}/api/services"
+        method: GET
+        return_content: yes
+        status_code: 200
+      register: services_result
+      tags: [verify]
+
+    - name: Display loaded services
+      debug:
+        msg: >
+          📋 Loaded {{ services_result.json.meta.total_services }} services.
+          Overall status: {{ services_result.json.meta.overall_status }}
+          Auto-ping: {{ services_result.json.meta.auto_ping_enabled }}
+      tags: [verify]
