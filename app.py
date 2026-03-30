@@ -164,6 +164,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             color: #f0f6fc;
             margin: 0;
         }
+         .brand-accent {
+            color: #58a6ff;
+        }
 
         .subtitle { color: #8b949e; font-size: 0.95rem; }
 
@@ -495,7 +498,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     <path fill="#0041ba" d="M 584.29 562.26 C 587.15 559.59 590.22 557.14 593.12 554.50 C 595.35 555.62 597.11 557.43 598.95 559.09 C 612.43 570.90 625.61 583.06 639.13 594.83 C 644.26 599.74 649.61 604.41 654.91 609.14 C 663.24 616.24 671.07 623.90 679.28 631.14 C 678.19 633.05 676.38 634.36 674.71 635.73 C 637.26 667.29 599.40 698.38 561.85 729.82 C 547.46 741.78 532.86 753.51 518.62 765.65 C 517.88 766.20 517.10 766.67 516.26 767.06 C 516.96 756.52 517.17 745.96 517.49 735.41 C 518.87 720.98 517.71 706.45 519.00 692.02 C 519.12 674.98 520.00 657.97 520.22 640.93 C 520.69 634.28 520.72 627.61 520.84 620.95 C 520.54 618.42 523.07 617.17 524.60 615.64 C 544.39 597.73 564.70 580.40 584.29 562.26 Z"/>
                 </g>
             </svg>
-            <h1>Shellty Pulse</h1>
+            <h1>Shell<span class="brand-accent">ty</span> Pulse</h1>
             <p class="subtitle">Service Health Monitor</p>
         </header>
 
@@ -547,7 +550,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         <footer>
             Shellty Pulse v1.0 &mdash; Service Health Monitor by
-            <a href="https://github.com/Shellty-IT" target="_blank" rel="noopener noreferrer">Shellty IT</a>
+            <a href="https://shellty-it.github.io" target="_blank" rel="noopener noreferrer">Shellty IT</a>
         </footer>
     </div>
 
