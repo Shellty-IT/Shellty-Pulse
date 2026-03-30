@@ -1,16 +1,17 @@
 """
 Shellty Pulse — Service Health Monitor
 
-Narzędzie do monitorowania dostępności usług webowych.
-Pełni jednocześnie funkcję keep-alive dla backendów na Render Free Tier
-(które usypiają po 15 min bez ruchu).
+A tool for monitoring the availability of web services.
+Also serves as a keep-alive mechanism for backends on Render Free Tier
+(which go to sleep after 15 minutes of inactivity).
 
 Features:
-    - Pings registered URLs every X minutes (configurable)
+    - Pings registered URLs every X minutes (configurable from dashboard)
     - Measures response time and records status
-    - Displays HTML dashboard on the main page
+    - Displays an HTML dashboard on the main page (dark theme, responsive)
     - Provides REST API for service management
-    - Configurable ping interval from dashboard (10m / 15m / 30m / 1h)
+    - Configurable ping interval: 10 min / 15 min / 30 min / 1 hour
+    - Frontend URL linking for each monitored service
 
 Author: Shellty IT
 """
@@ -43,8 +44,8 @@ logger = logging.getLogger("shellty-pulse")
 # ============================================
 # Configuration from Environment Variables
 # ============================================
-REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 10))    # timeout per request in seconds
-SERVICES_JSON = os.environ.get("SERVICES", "[]")                # preloaded services JSON
+REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 10))
+SERVICES_JSON = os.environ.get("SERVICES", "[]")
 
 # Mutable ping interval — can be changed via API at runtime
 ping_interval: int = int(os.environ.get("PING_INTERVAL", 600))
@@ -56,6 +57,10 @@ AVAILABLE_INTERVALS = {
     1800: "30 min",
     3600: "1 hour",
 }
+
+# Maximum allowed lengths for user input
+MAX_NAME_LENGTH = 100
+MAX_URL_LENGTH = 2048
 
 # ============================================
 # In-Memory Data Store
@@ -188,12 +193,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             transition: all 0.2s;
         }
 
-        .btn:hover          { background: #30363d; border-color: #58a6ff; }
-        .btn:disabled        { opacity: 0.5; cursor: not-allowed; }
-        .btn.primary         { background: #238636; border-color: #238636; color: #fff; }
-        .btn.primary:hover   { background: #2ea043; }
-        .btn.active          { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-        .btn.inactive        { background: #21262d; border-color: #f85149; color: #f85149; }
+        .btn:hover           { background: #30363d; border-color: #58a6ff; }
+        .btn:disabled         { opacity: 0.5; cursor: not-allowed; }
+        .btn.primary          { background: #238636; border-color: #238636; color: #fff; }
+        .btn.primary:hover    { background: #2ea043; }
+        .btn.active           { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+        .btn.inactive         { background: #21262d; border-color: #f85149; color: #f85149; }
 
         /* === Interval Selector === */
         .interval-selector {
@@ -220,10 +225,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             transition: all 0.2s;
         }
 
-        .interval-btn:hover        { border-color: #58a6ff; color: #c9d1d9; }
-        .interval-btn.active        { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-        .interval-btn:disabled       { opacity: 0.4; cursor: not-allowed; }
-        .interval-btn:disabled:hover { border-color: #30363d; color: #8b949e; }
+        .interval-btn:hover         { border-color: #58a6ff; color: #c9d1d9; }
+        .interval-btn.active         { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+        .interval-btn:disabled        { opacity: 0.4; cursor: not-allowed; }
+        .interval-btn:disabled:hover  { border-color: #30363d; color: #8b949e; }
 
         .check-info {
             color: #8b949e;
@@ -260,13 +265,50 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             font-weight: 600;
             color: #f0f6fc;
             font-size: 1rem;
-            margin-bottom: 0.2rem;
+            margin-bottom: 0.15rem;
         }
 
-        .service-url {
+        .service-name a {
+            color: #f0f6fc;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .service-name a:hover { color: #58a6ff; }
+
+        .service-name .link-arrow {
+            font-size: 0.7rem;
+            opacity: 0.4;
+            margin-left: 0.2rem;
+            transition: opacity 0.2s;
+        }
+
+        .service-name a:hover .link-arrow { opacity: 1; }
+
+        .service-backend {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            font-size: 0.78rem;
+            margin-top: 0.1rem;
+        }
+
+        .backend-label {
+            color: #6e7681;
+            font-weight: 500;
+            flex-shrink: 0;
+        }
+
+        .backend-link {
             color: #58a6ff;
-            font-size: 0.8rem;
+            text-decoration: none;
             word-break: break-all;
+            transition: color 0.2s;
+        }
+
+        .backend-link:hover {
+            color: #79c0ff;
+            text-decoration: underline;
         }
 
         .service-meta {
@@ -358,6 +400,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             font-size: 0.8rem;
         }
 
+        footer a {
+            color: #58a6ff;
+            text-decoration: none;
+        }
+
+        footer a:hover { text-decoration: underline; }
+
         .loading { text-align: center; padding: 2rem; color: #8b949e; }
 
         /* === Responsive === */
@@ -416,15 +465,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <div class="add-service">
             <h3>➕ Add New Service</h3>
             <div class="form-row">
-                <input type="text" id="new-name" placeholder="Service name" />
-                <input type="text" id="new-url" placeholder="Health check URL (https://...)" />
+                <input type="text" id="new-name" placeholder="Service name" maxlength="100" />
+                <input type="text" id="new-url" placeholder="Health check URL (https://...)" maxlength="2048" />
+                <input type="text" id="new-frontend-url" placeholder="Frontend URL — optional" maxlength="2048" />
                 <button class="btn primary" onclick="addService()">Add</button>
             </div>
             <p class="add-note">⚠ Services added here are stored in memory and will be reset on container restart.
             To add permanently, update the SERVICES variable in docker-compose.yml.</p>
         </div>
 
-        <footer>Shellty Pulse v1.0 &mdash; Service Health Monitor by Shellty IT</footer>
+        <footer>
+            Shellty Pulse v1.0 &mdash; Service Health Monitor by
+            <a href="https://github.com/Shellty-IT" target="_blank" rel="noopener noreferrer">Shellty IT</a>
+        </footer>
     </div>
 
     <script>
@@ -551,17 +604,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         async function addService() {
             var nameVal = document.getElementById('new-name').value.trim();
             var urlVal  = document.getElementById('new-url').value.trim();
-            if (!nameVal || !urlVal) { alert('Enter both name and URL.'); return; }
+            var frontendVal = document.getElementById('new-frontend-url').value.trim();
+            if (!nameVal || !urlVal) { alert('Enter both name and health check URL.'); return; }
+
+            var payload = { name: nameVal, url: urlVal };
+            if (frontendVal) { payload.frontend_url = frontendVal; }
 
             try {
                 var res = await fetch('/api/services', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: nameVal, url: urlVal })
+                    body: JSON.stringify(payload)
                 });
                 if (res.ok) {
                     document.getElementById('new-name').value = '';
                     document.getElementById('new-url').value = '';
+                    document.getElementById('new-frontend-url').value = '';
                     await fetchServices();
                 } else {
                     var errData = await res.json();
@@ -642,11 +700,26 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 var upColor = svc.uptime_percent !== null ? uptimeColor(svc.uptime_percent) : '#484f58';
                 var upWidth = svc.uptime_percent !== null ? svc.uptime_percent : 0;
 
+                /* Service name — linked to frontend if frontend_url exists */
+                var nameHtml;
+                if (svc.frontend_url) {
+                    nameHtml = '<a href="' + escapeHtml(svc.frontend_url) + '" target="_blank" rel="noopener noreferrer">' +
+                               escapeHtml(svc.name) +
+                               ' <span class="link-arrow">↗</span></a>';
+                } else {
+                    nameHtml = escapeHtml(svc.name);
+                }
+
+                /* Backend health URL — always shown as clickable link */
+                var backendHtml = '<span class="backend-label">Backend:</span> ' +
+                    '<a href="' + escapeHtml(svc.url) + '" target="_blank" rel="noopener noreferrer" class="backend-link">' +
+                    escapeHtml(svc.url) + '</a>';
+
                 return '<div class="service-card">' +
                     '<div class="status-icon">' + cfg.icon + '</div>' +
                     '<div class="service-info">' +
-                        '<div class="service-name">' + escapeHtml(svc.name) + '</div>' +
-                        '<div class="service-url">' + escapeHtml(svc.url) + '</div>' +
+                        '<div class="service-name">' + nameHtml + '</div>' +
+                        '<div class="service-backend">' + backendHtml + '</div>' +
                     '</div>' +
                     '<div class="service-meta">' +
                         '<div class="response-time ' + rtClass(svc.response_time_ms) + '">' + rtText(svc.response_time_ms) + '</div>' +
@@ -739,13 +812,14 @@ def get_overall_status():
         return worst
 
 
-def create_service(name, url):
+def create_service(name, url, frontend_url=None):
     """
     Create a new service record with default values.
 
     Args:
-        name: display name
-        url:  full health check URL
+        name:         display name
+        url:          full health check URL (backend)
+        frontend_url: optional URL to the frontend application
 
     Returns:
         dict: service record
@@ -754,6 +828,7 @@ def create_service(name, url):
         "id": generate_id(),
         "name": name,
         "url": url,
+        "frontend_url": frontend_url,
         "status": "unknown",
         "response_time_ms": None,
         "last_check": None,
@@ -853,7 +928,12 @@ def load_services_from_env():
     """
     Parse SERVICES environment variable and preload services.
 
-    Expected format: JSON array of {"name": "...", "url": "..."} objects.
+    Expected format: JSON array of objects with required "name" and "url",
+    and optional "frontend_url" fields.
+
+    Example:
+        [{"name": "App", "url": "https://api.example.com/health", "frontend_url": "https://example.com"}]
+
     Silently skips invalid entries.
     """
     try:
@@ -864,9 +944,15 @@ def load_services_from_env():
 
         for item in parsed:
             if isinstance(item, dict) and "name" in item and "url" in item:
-                svc = create_service(item["name"], item["url"])
+                svc = create_service(
+                    name=item["name"],
+                    url=item["url"],
+                    frontend_url=item.get("frontend_url"),
+                )
                 services.append(svc)
                 logger.info("  Preloaded: %s → %s", item["name"], item["url"])
+                if item.get("frontend_url"):
+                    logger.info("    Frontend: %s", item["frontend_url"])
             else:
                 logger.warning("  Skipping invalid entry: %s", item)
 
@@ -929,7 +1015,13 @@ def add_service():
     """
     Add a new service to monitor.
 
-    Expects JSON: {"name": "Service Name", "url": "https://example.com/health"}
+    Expects JSON body:
+        {
+            "name": "Service Name",                          (required)
+            "url": "https://example.com/health",             (required)
+            "frontend_url": "https://example.com"            (optional)
+        }
+
     Returns created service with HTTP 201.
     """
     data = request.get_json(silent=True)
@@ -939,14 +1031,27 @@ def add_service():
 
     name = data.get("name", "").strip()
     url = data.get("url", "").strip()
+    frontend_url = data.get("frontend_url", "").strip() or None
 
     if not name or not url:
         return jsonify({"error": "Both 'name' and 'url' are required."}), 400
 
+    if len(name) > MAX_NAME_LENGTH:
+        return jsonify({"error": f"Name must be at most {MAX_NAME_LENGTH} characters."}), 400
+
+    if len(url) > MAX_URL_LENGTH:
+        return jsonify({"error": f"URL must be at most {MAX_URL_LENGTH} characters."}), 400
+
     if not url.startswith(("http://", "https://")):
         return jsonify({"error": "URL must start with http:// or https://"}), 400
 
-    svc = create_service(name, url)
+    if frontend_url and not frontend_url.startswith(("http://", "https://")):
+        return jsonify({"error": "Frontend URL must start with http:// or https://"}), 400
+
+    if frontend_url and len(frontend_url) > MAX_URL_LENGTH:
+        return jsonify({"error": f"Frontend URL must be at most {MAX_URL_LENGTH} characters."}), 400
+
+    svc = create_service(name, url, frontend_url)
 
     with services_lock:
         services.append(svc)

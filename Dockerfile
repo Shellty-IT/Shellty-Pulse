@@ -1,6 +1,6 @@
 # ============================================
 # Shellty Pulse — Service Health Monitor
-# Multi-stage optimized Docker image
+# Optimized Docker image with security best practices
 # ============================================
 
 # --- Base image ---
@@ -18,19 +18,29 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# --- Non-root user for security ---
+RUN groupadd -r pulse && \
+    useradd -r -g pulse -d /app -s /sbin/nologin pulse
+
 # --- Working directory ---
 WORKDIR /app
 
 # --- Python dependencies ---
 # Installed inline (no requirements.txt needed for 3 packages)
 # Pinned versions for reproducible builds
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir --no-compile \
     flask==3.1.1 \
     apscheduler==3.10.4 \
     requests==2.32.3
 
 # --- Application code ---
 COPY app.py .
+
+# --- Set ownership ---
+RUN chown -R pulse:pulse /app
+
+# --- Switch to non-root user ---
+USER pulse
 
 # --- Port exposure ---
 EXPOSE 5000
