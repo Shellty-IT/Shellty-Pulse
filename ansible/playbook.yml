@@ -4,19 +4,19 @@
 # Deploys Service Health Monitor as a Docker container.
 #
 # Usage:
-#   ansible-playbook ansible/playbook.yml -i inventory.ini
 #   ansible-playbook ansible/playbook.yml -i "localhost," -c local
+#   ansible-playbook ansible/playbook.yml -i inventory.ini
 #
 # Requirements:
 #   - Target host has Python 3 installed
 #   - User has sudo privileges
-#   - Internet access (for apt packages and Docker image)
+#   - Internet access (for apt packages and pip)
 # ============================================
 
 ---
 - name: Deploy Shellty Pulse — Service Health Monitor
   hosts: all
-  become: yes
+  become: true
 
   # ----------------------------------------
   # Variables
@@ -29,10 +29,10 @@
     request_timeout: "10"
     preloaded_services: >-
       [
-        {"name":"KSeF Master","url":"https://ksef-master-backend.onrender.com/health"},
-        {"name":"Postlio","url":"https://postlio-backend.onrender.com/health"},
-        {"name":"Shellty Blog","url":"https://shellty-blog.onrender.com/health"},
-        {"name":"SmartQuote AI","url":"https://smartquote-backend-fzh5.onrender.com/api/health"}
+        {"name":"KSeF Master","url":"https://ksef-master-backend.onrender.com/health","frontend_url":"https://ksef-master.netlify.app/"},
+        {"name":"Postlio","url":"https://postlio-backend.onrender.com/health","frontend_url":"https://postlio.netlify.app/"},
+        {"name":"Shellty Blog","url":"https://shellty-blog.onrender.com/health","frontend_url":"https://shellty-blog.onrender.com/"},
+        {"name":"SmartQuote AI","url":"https://smartquote-backend-fzh5.onrender.com/api/health","frontend_url":"https://smartquote-ai.netlify.app/"}
       ]
 
   # ----------------------------------------
@@ -43,13 +43,13 @@
     # === Docker Installation ===
 
     - name: Update apt cache
-      apt:
-        update_cache: yes
+      ansible.builtin.apt:
+        update_cache: true
         cache_valid_time: 3600
       tags: [docker, setup]
 
-    - name: Install Docker dependencies
-      apt:
+    - name: Install Docker prerequisites
+      ansible.builtin.apt:
         name:
           - apt-transport-https
           - ca-certificates
@@ -60,59 +60,71 @@
         state: present
       tags: [docker, setup]
 
-    - name: Add Docker GPG key
-      apt_key:
-        url: https://download.docker.com/linux/ubuntu/gpg
-        state: present
+    - name: Create Docker keyrings directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
       tags: [docker, setup]
 
-    - name: Add Docker repository
-      apt_repository:
-        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    - name: Download Docker GPG key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+      tags: [docker, setup]
+
+    - name: Add Docker APT repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/ubuntu
+          {{ ansible_distribution_release }} stable
         state: present
       tags: [docker, setup]
 
     - name: Install Docker CE
-      apt:
+      ansible.builtin.apt:
         name:
           - docker-ce
           - docker-ce-cli
           - containerd.io
         state: present
-        update_cache: yes
+        update_cache: true
       tags: [docker, setup]
 
     - name: Ensure Docker service is running
-      service:
+      ansible.builtin.service:
         name: docker
         state: started
-        enabled: yes
+        enabled: true
       tags: [docker, setup]
 
     - name: Install Python Docker SDK (for Ansible docker modules)
-      pip:
+      ansible.builtin.pip:
         name: docker
         state: present
+        executable: pip3
       tags: [docker, setup]
 
     # === Application Deployment ===
 
     - name: Create application directory
-      file:
+      ansible.builtin.file:
         path: "/opt/{{ app_name }}"
         state: directory
         mode: "0755"
       tags: [deploy]
 
     - name: Copy application file
-      copy:
+      ansible.builtin.copy:
         src: "../app.py"
         dest: "/opt/{{ app_name }}/app.py"
         mode: "0644"
       tags: [deploy]
 
     - name: Copy Dockerfile
-      copy:
+      ansible.builtin.copy:
         src: "../Dockerfile"
         dest: "/opt/{{ app_name }}/Dockerfile"
         mode: "0644"
@@ -125,7 +137,7 @@
         source: build
         build:
           path: "/opt/{{ app_name }}"
-        force_source: yes
+        force_source: true
       tags: [deploy]
 
     - name: Stop and remove existing container (if any)
@@ -158,10 +170,10 @@
     # === Verification ===
 
     - name: Wait for application to become healthy
-      uri:
+      ansible.builtin.uri:
         url: "http://localhost:{{ app_port }}/health"
         method: GET
-        return_content: yes
+        return_content: true
         status_code: 200
       register: health_result
       retries: 10
@@ -170,7 +182,7 @@
       tags: [verify]
 
     - name: Display health check result
-      debug:
+      ansible.builtin.debug:
         msg: >
           ✅ Shellty Pulse is running!
           Status: {{ health_result.json.status }}
@@ -179,16 +191,16 @@
       tags: [verify]
 
     - name: Verify services are loaded
-      uri:
+      ansible.builtin.uri:
         url: "http://localhost:{{ app_port }}/api/services"
         method: GET
-        return_content: yes
+        return_content: true
         status_code: 200
       register: services_result
       tags: [verify]
 
     - name: Display loaded services
-      debug:
+      ansible.builtin.debug:
         msg: >
           📋 Loaded {{ services_result.json.meta.total_services }} services.
           Overall status: {{ services_result.json.meta.overall_status }}

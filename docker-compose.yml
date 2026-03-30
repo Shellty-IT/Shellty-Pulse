@@ -2,13 +2,11 @@
 # Shellty Pulse — Docker Compose Configuration
 # ============================================
 # Usage:
-#   docker-compose up --build        (foreground)
-#   docker-compose up --build -d     (detached/background)
-#   docker-compose down              (stop & remove)
-#   docker-compose logs -f monitor   (follow logs)
+#   docker compose up --build        (foreground)
+#   docker compose up --build -d     (detached/background)
+#   docker compose down              (stop & remove)
+#   docker compose logs -f monitor   (follow logs)
 # ============================================
-
-version: "3.8"
 
 services:
   monitor:
@@ -36,13 +34,13 @@ services:
       # Ensure Python logs appear immediately in docker logs
       PYTHONUNBUFFERED: "1"
 
-      # Preloaded services — JSON array with name + full health check URL
-      SERVICES: >
+      # Preloaded services — JSON array with name, backend health URL, and frontend URL
+      SERVICES: >-
         [
-          {"name": "KSeF Master",   "url": "https://ksef-master-backend.onrender.com/health"},
-          {"name": "Postlio",       "url": "https://postlio-backend.onrender.com/health"},
-          {"name": "Shellty Blog",  "url": "https://shellty-blog.onrender.com/health"},
-          {"name": "SmartQuote AI", "url": "https://smartquote-backend-fzh5.onrender.com/api/health"}
+          {"name": "KSeF Master",   "url": "https://ksef-master-backend.onrender.com/health",          "frontend_url": "https://ksef-master.netlify.app/"},
+          {"name": "Postlio",       "url": "https://postlio-backend.onrender.com/health",               "frontend_url": "https://postlio.netlify.app/"},
+          {"name": "Shellty Blog",  "url": "https://shellty-blog.onrender.com/health",                  "frontend_url": "https://shellty-blog.onrender.com/"},
+          {"name": "SmartQuote AI", "url": "https://smartquote-backend-fzh5.onrender.com/api/health",   "frontend_url": "https://smartquote-ai.netlify.app/"}
         ]
 
     # --- Health check ---
@@ -55,5 +53,19 @@ services:
       start_period: 15s
 
     # --- Restart policy ---
-    # Always restart unless manually stopped
     restart: unless-stopped
+
+    # --- Logging ---
+    # Limit log file size to prevent disk exhaustion
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # --- Resource limits ---
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.50"
