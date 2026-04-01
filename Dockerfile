@@ -1,15 +1,15 @@
-# ============================================
+# ===========================================
 # Shellty Pulse — Service Health Monitor
 # Optimized Docker image with security best practices
-# ============================================
+# ===========================================
 
 # --- Base image ---
 FROM python:3.12-slim
 
 # --- Metadata ---
-LABEL maintainer="Shellty IT"
-LABEL description="Shellty Pulse — Service Health Monitor"
-LABEL version="1.0"
+LABEL maintainer="Shellty IT" \
+      description="Shellty Pulse — Service Health Monitor" \
+      version="1.0"
 
 # --- System dependencies ---
 # curl is needed for Docker HEALTHCHECK (not included in slim)
@@ -26,18 +26,16 @@ RUN groupadd -r pulse && \
 WORKDIR /app
 
 # --- Python dependencies ---
-# Installed inline (no requirements.txt needed for 3 packages)
 # Pinned versions for reproducible builds
-RUN pip install --no-cache-dir --no-compile \
+# gunicorn as production WSGI server
+RUN pip install --no-cache-dir \
     flask==3.1.1 \
     apscheduler==3.10.4 \
-    requests==2.32.3
+    requests==2.32.3 \
+    gunicorn==23.0.0
 
 # --- Application code ---
-COPY app.py .
-
-# --- Set ownership ---
-RUN chown -R pulse:pulse /app
+COPY --chown=pulse:pulse app.py .
 
 # --- Switch to non-root user ---
 USER pulse
@@ -46,8 +44,6 @@ USER pulse
 EXPOSE 5000
 
 # --- Health check ---
-# Docker will automatically monitor container health
-# Checks every 30s, timeout 10s, retries 3 times before marking unhealthy
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=15s \
     CMD curl -f http://localhost:5000/health || exit 1
 
@@ -56,5 +52,7 @@ ENV PING_INTERVAL=600 \
     REQUEST_TIMEOUT=10 \
     PYTHONUNBUFFERED=1
 
-# --- Run application ---
-CMD ["python", "app.py"]
+# --- Run with production WSGI server ---
+# Single worker because app uses in-memory state with threading
+# 2 threads for concurrent request handling
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "2", "--access-logfile", "-", "app:app"]

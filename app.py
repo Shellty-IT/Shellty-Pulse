@@ -1284,8 +1284,8 @@ logger.info("=" * 50)
 
 
 # ============================================
-# Direct Execution (development / Docker)
+# Direct Execution (development only)
 # ============================================
 if __name__ == "__main__":
-    logger.info("Dashboard: http://0.0.0.0:5000")
+    logger.info("Development mode — Dashboard: http://0.0.0.0:5000")
     app.run(host="0.0.0.0", port=5000, debug=False)
