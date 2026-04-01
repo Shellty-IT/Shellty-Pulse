@@ -16,6 +16,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
@@ -33,7 +34,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Login to Azure
-        uses: azure/login@v1
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -42,6 +43,31 @@ jobs:
           az webapp up \
             --name ${{ env.AZURE_WEBAPP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --runtime "PYTHON:3.12" \
-            --sku B1 \
-            --os-type Linux
+            --runtime "PYTHON:3.12"
+        timeout-minutes: 10
+
+      - name: Verify deployment
+        run: |
+          echo "Waiting 30 seconds for application to start..."
+          sleep 30
+          echo "Checking health endpoint..."
+          curl -f https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/health || exit 1
+          echo "Health check passed!"
+
+      - name: Azure logout
+        if: always()
+        run: az logout
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "✅ Deploy successful!"
+          echo "🌐 App URL: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deploy failed! Check logs above for details."
+          echo "📋 Troubleshooting steps:"
+          echo "   1. Check Azure Portal for deployment logs"
+          echo "   2. Run: az webapp log tail --name ${{ env.AZURE_WEBAPP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }}"

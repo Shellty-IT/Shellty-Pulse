@@ -548,7 +548,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
 
         <footer>
-            Shellty Pulse v1.0 &mdash; Service Health Monitor by
+            Service Health Monitor by
             <a href="https://shellty-it.github.io" target="_blank" rel="noopener noreferrer">Shellty IT</a>
         </footer>
     </div>
