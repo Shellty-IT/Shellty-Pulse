@@ -1,12 +1,12 @@
-# ============================================
+# ===========================================
 # Shellty Pulse — Docker Compose Configuration
-# ============================================
+# ===========================================
 # Usage:
-#   docker compose up --build        (foreground)
-#   docker compose up --build -d     (detached/background)
-#   docker compose down              (stop & remove)
-#   docker compose logs -f monitor   (follow logs)
-# ============================================
+#   docker compose up --build         (foreground)
+#   docker compose up --build -d      (detached/background)
+#   docker compose down               (stop & remove)
+#   docker compose logs -f monitor    (follow logs)
+# ===========================================
 
 services:
   monitor:
@@ -34,7 +34,7 @@ services:
       # Ensure Python logs appear immediately in docker logs
       PYTHONUNBUFFERED: "1"
 
-      # Preloaded services — JSON array with name, backend health URL, and frontend URL
+      # Preloaded services — JSON array
       SERVICES: >-
         [
           {"name": "KSeF Master",   "url": "https://ksef-master-backend.onrender.com/health",          "frontend_url": "https://ksef-master.netlify.app/"},
@@ -63,7 +63,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-    # --- Resource limits ---
+    # --- Resource limits (Docker Compose V2+) ---
     deploy:
       resources:
         limits:

@@ -1,9 +1,9 @@
-# ============================================
+# ===========================================
 # Shellty Pulse — CI Pipeline
-# ============================================
+# ===========================================
 # Runs on push to main and pull requests to main.
-# Tests: syntax check, Docker build, all API endpoints, Docker Compose.
-# ============================================
+# Jobs: lint → build + integration tests, compose test.
+# ===========================================
 
 name: CI — Build & Test
 
@@ -19,7 +19,7 @@ jobs:
   # Job 1: Code Quality Check
   # ----------------------------------------
   lint:
-    name: 🔍 Code Quality
+    name: "\U0001F50D Code Quality"
     runs-on: ubuntu-latest
 
     steps:
@@ -41,7 +41,7 @@ jobs:
   # Job 2: Docker Build & API Integration Tests
   # ----------------------------------------
   build-and-test:
-    name: 🐳 Build & Integration Tests
+    name: "\U0001F433 Build & Integration Tests"
     runs-on: ubuntu-latest
     needs: lint
 
@@ -49,8 +49,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker build -t shellty-pulse:test .
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (with cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: shellty-pulse:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Run container
         run: |
@@ -72,6 +81,21 @@ jobs:
           done
           echo "❌ Container failed to become healthy"
           docker logs shellty-pulse-test
+          exit 1
+
+      - name: Verify Docker HEALTHCHECK status
+        run: |
+          echo "Waiting for Docker HEALTHCHECK..."
+          for i in $(seq 1 20); do
+            status=$(docker inspect --format='{{.State.Health.Status}}' shellty-pulse-test 2>/dev/null || echo "none")
+            if [ "$status" = "healthy" ]; then
+              echo "✅ Docker HEALTHCHECK — PASSED (healthy after ~${i}×3s)"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "❌ Docker HEALTHCHECK — FAILED (status: $status)"
+          docker inspect --format='{{json .State.Health}}' shellty-pulse-test
           exit 1
 
       # --- Test all API endpoints ---
@@ -134,7 +158,9 @@ jobs:
           data = json.load(sys.stdin)
           assert 'services' in data, 'Missing services'
           assert 'overall_status' in data, 'Missing overall_status'
-          print(f'✅ POST /api/check-all — PASSED ({len(data[\"services\"])} services checked)')
+          # Verify services were actually checked (status changed from unknown)
+          checked = [s for s in data['services'] if s['status'] != 'unknown']
+          print(f'✅ POST /api/check-all — PASSED ({len(data[\"services\"])} services, {len(checked)} checked)')
           "
 
       - name: "Test POST /api/toggle-auto-ping"
@@ -196,6 +222,18 @@ jobs:
             exit 1
           fi
 
+      - name: "Test input validation (reject invalid URL)"
+        run: |
+          status_code=$(curl -o /dev/null -s -w "%{http_code}" -X POST http://localhost:5000/api/services \
+            -H "Content-Type: application/json" \
+            -d '{"name":"Bad","url":"not-a-url"}')
+          if [ "$status_code" = "400" ]; then
+            echo "✅ URL validation — PASSED (rejected invalid URL with HTTP 400)"
+          else
+            echo "❌ URL validation — FAILED (expected 400, got $status_code)"
+            exit 1
+          fi
+
       - name: Container logs (debug)
         if: always()
         run: docker logs shellty-pulse-test
@@ -208,7 +246,7 @@ jobs:
   # Job 3: Docker Compose Integration Test
   # ----------------------------------------
   compose-test:
-    name: 🐙 Docker Compose Test
+    name: "\U0001F419 Docker Compose Test"
     runs-on: ubuntu-latest
     needs: lint
 
