@@ -1,0 +1,39 @@
+name: CD - Deploy to Azure
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create requirements.txt
+        run: |
+          cat > requirements.txt << EOF
+          Flask==3.1.1
+          APScheduler==3.10.4
+          requests==2.32.3
+          gunicorn==22.0.0
+          EOF
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Web App
+        run: |
+          az webapp up --name shellty-pulse --resource-group my-apps-rg --runtime "PYTHON:3.10"
+
+      - name: Azure logout
+        run: az logout
