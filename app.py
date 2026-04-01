@@ -1253,46 +1253,40 @@ def set_ping_interval():
 
 
 # ============================================
-# Application Entry Point
+# Application Initialization (module-level)
 # ============================================
+# Runs on import (gunicorn) and direct execution (python app.py).
+# Ensures scheduler and services work in both scenarios.
 
-def start_app():
-    """Initialize services, start scheduler, run Flask server."""
-    global scheduler
+logger.info("=" * 50)
+logger.info("  Starting Shellty Pulse — Service Health Monitor")
+logger.info("=" * 50)
+logger.info("Configuration:")
+logger.info("  PING_INTERVAL:   %d seconds (%d min)", ping_interval, ping_interval // 60)
+logger.info("  REQUEST_TIMEOUT: %d seconds", REQUEST_TIMEOUT)
 
-    logger.info("=" * 50)
-    logger.info("  Starting Shellty Pulse — Service Health Monitor")
-    logger.info("=" * 50)
-    logger.info("Configuration:")
-    logger.info("  PING_INTERVAL:   %d seconds (%d min)", ping_interval, ping_interval // 60)
-    logger.info("  REQUEST_TIMEOUT: %d seconds", REQUEST_TIMEOUT)
+load_services_from_env()
 
-    # Load services from SERVICES env var
-    load_services_from_env()
+scheduler = BackgroundScheduler(daemon=True)
+scheduler.add_job(
+    func=scheduled_check,
+    trigger="interval",
+    seconds=ping_interval,
+    id="health_check_job",
+    name="Periodic Health Check",
+    replace_existing=True,
+)
+scheduler.start()
+logger.info("Scheduler started — checking every %d seconds.", ping_interval)
 
-    # Start APScheduler for periodic health checks
-    scheduler = BackgroundScheduler(daemon=True)
-    scheduler.add_job(
-        func=scheduled_check,
-        trigger="interval",
-        seconds=ping_interval,
-        id="health_check_job",
-        name="Periodic Health Check",
-        replace_existing=True,
-    )
-    scheduler.start()
-    logger.info("Scheduler started — checking every %d seconds.", ping_interval)
-
-    # Run initial check in background (non-blocking for fast startup)
-    threading.Thread(target=check_all_services, daemon=True).start()
-    logger.info("Initial health check started in background.")
-
-    logger.info("Dashboard: http://0.0.0.0:5000")
-    logger.info("=" * 50)
-
-    # Start Flask (0.0.0.0 for Docker compatibility)
-    app.run(host="0.0.0.0", port=5000, debug=False)
+threading.Thread(target=check_all_services, daemon=True).start()
+logger.info("Initial health check started in background.")
+logger.info("=" * 50)
 
 
+# ============================================
+# Direct Execution (development / Docker)
+# ============================================
 if __name__ == "__main__":
-    start_app()
+    logger.info("Dashboard: http://0.0.0.0:5000")
+    app.run(host="0.0.0.0", port=5000, debug=False)
