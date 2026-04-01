@@ -9,7 +9,9 @@ on:
       - main
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Wyłącza warning Node.js 20
+  AZURE_WEBAPP_NAME: shellty-pulse
+  RESOURCE_GROUP: my-apps-rg
+  PYTHON_VERSION: '3.12'
 
 jobs:
   deploy:
@@ -20,25 +22,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Create deployment package
         run: |
-          mkdir -p deploy
-          cp -r app.py requirements.txt deploy/
-          cd deploy
-          zip -r ../deploy.zip .
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: 'shellty-pulse'
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: deploy.zip
-          slot-name: 'production'
+        run: |
+          az webapp up \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --runtime "PYTHON:3.12" \
+            --sku B1 \
+            --os-type Linux
