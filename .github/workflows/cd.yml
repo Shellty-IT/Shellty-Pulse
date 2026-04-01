@@ -12,6 +12,7 @@ env:
   AZURE_WEBAPP_NAME: shellty-pulse
   RESOURCE_GROUP: my-apps-rg
   PYTHON_VERSION: '3.12'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   deploy:
