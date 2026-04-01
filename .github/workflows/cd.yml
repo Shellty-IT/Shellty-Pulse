@@ -17,23 +17,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create requirements.txt
-        run: |
-          cat > requirements.txt << EOF
-          Flask==3.1.1
-          APScheduler==3.10.4
-          requests==2.32.3
-          gunicorn==22.0.0
-          EOF
-
-      - name: Login to Azure
-        uses: azure/login@v1
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
       - name: Deploy to Azure Web App
-        run: |
-          az webapp up --name shellty-pulse --resource-group my-apps-rg --runtime "PYTHON:3.10"
-
-      - name: Azure logout
-        run: az logout
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'shellty-pulse'
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: .
