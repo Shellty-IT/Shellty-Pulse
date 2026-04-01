@@ -13,6 +13,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   # ----------------------------------------
@@ -21,6 +28,7 @@ jobs:
   lint:
     name: "\U0001F50D Code Quality"
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - name: Checkout repository
@@ -32,10 +40,114 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install flask==3.1.1 apscheduler==3.10.4 requests==2.32.3
+        run: pip install flask==3.1.1 apscheduler==3.10.4 requests==2.32.3 flake8
 
       - name: Check Python syntax
         run: python -m py_compile app.py
+
+      - name: Lint with flake8 (E501 excluded — inline HTML/SVG template)
+        run: flake8 app.py --max-line-length=120 --extend-ignore=E501 --statistics
+
+      - name: Unit tests (application factory)
+        env:
+          TESTING: "1"
+        run: |
+          python3 -c "
+          import os
+          os.environ['TESTING'] = '1'
+          from app import create_app
+
+          app = create_app(testing=True)
+          client = app.test_client()
+
+          # Test /health
+          r = client.get('/health')
+          assert r.status_code == 200
+          data = r.get_json()
+          assert data['status'] == 'ok'
+          assert data['service'] == 'shellty-pulse'
+          assert 'version' in data
+          assert 'uptime_seconds' in data
+          print('✅ Unit: GET /health — PASSED')
+
+          # Test GET /api/services (empty in test mode)
+          r = client.get('/api/services')
+          assert r.status_code == 200
+          data = r.get_json()
+          assert 'services' in data
+          assert 'meta' in data
+          print('✅ Unit: GET /api/services — PASSED')
+
+          # Test POST /api/services — valid
+          r = client.post('/api/services', json={
+              'name': 'Test',
+              'url': 'https://example.com/health'
+          })
+          assert r.status_code == 201
+          svc_id = r.get_json()['id']
+          print(f'✅ Unit: POST /api/services — PASSED (id: {svc_id})')
+
+          # Test POST /api/services — reject empty name
+          r = client.post('/api/services', json={'name': '', 'url': 'https://x.com'})
+          assert r.status_code == 400
+          print('✅ Unit: Validation (empty name) — PASSED')
+
+          # Test POST /api/services — reject invalid URL
+          r = client.post('/api/services', json={'name': 'X', 'url': 'not-a-url'})
+          assert r.status_code == 400
+          print('✅ Unit: Validation (bad URL) — PASSED')
+
+          # Test POST /api/services — SSRF protection
+          r = client.post('/api/services', json={
+              'name': 'SSRF', 'url': 'http://169.254.169.254/latest/meta-data/'
+          })
+          assert r.status_code == 400
+          print('✅ Unit: SSRF protection (metadata) — PASSED')
+
+          r = client.post('/api/services', json={
+              'name': 'SSRF2', 'url': 'http://127.0.0.1:6379/'
+          })
+          assert r.status_code == 400
+          print('✅ Unit: SSRF protection (localhost) — PASSED')
+
+          # Test DELETE
+          r = client.delete(f'/api/services/{svc_id}')
+          assert r.status_code == 204
+          print(f'✅ Unit: DELETE /api/services/{svc_id} — PASSED')
+
+          # Test DELETE — not found
+          r = client.delete('/api/services/nonexistent')
+          assert r.status_code == 404
+          print('✅ Unit: DELETE (not found) — PASSED')
+
+          # Test toggle auto-ping
+          r = client.post('/api/toggle-auto-ping')
+          assert r.status_code == 200
+          assert 'auto_ping_enabled' in r.get_json()
+          print('✅ Unit: POST /api/toggle-auto-ping — PASSED')
+
+          # Test set ping interval — valid
+          r = client.post('/api/ping-interval', json={'interval': 900})
+          assert r.status_code == 200
+          assert r.get_json()['interval'] == 900
+          print('✅ Unit: POST /api/ping-interval (900) — PASSED')
+
+          # Test set ping interval — invalid
+          r = client.post('/api/ping-interval', json={'interval': 999})
+          assert r.status_code == 400
+          print('✅ Unit: POST /api/ping-interval (invalid) — PASSED')
+
+          # Test dashboard
+          r = client.get('/')
+          assert r.status_code == 200
+          assert b'Shellty Pulse' in r.data
+          print('✅ Unit: GET / (Dashboard) — PASSED')
+
+          print()
+          print('=' * 50)
+          print('All unit tests passed!')
+          print('=' * 50)
+          "
 
   # ----------------------------------------
   # Job 2: Docker Build & API Integration Tests
@@ -44,6 +156,7 @@ jobs:
     name: "\U0001F433 Build & Integration Tests"
     runs-on: ubuntu-latest
     needs: lint
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -100,7 +213,7 @@ jobs:
 
       # --- Test all API endpoints ---
 
-      - name: "Test GET /health"
+      - name: "Test GET /health (enriched response)"
         run: |
           response=$(curl -sf http://localhost:5000/health)
           echo "$response" | python3 -c "
@@ -109,7 +222,11 @@ jobs:
           assert data['status'] == 'ok', f'Expected ok, got {data[\"status\"]}'
           assert 'timestamp' in data, 'Missing timestamp'
           assert data['service'] == 'shellty-pulse', 'Wrong service name'
-          print('✅ GET /health — PASSED')
+          assert 'version' in data, 'Missing version'
+          assert 'uptime_seconds' in data, 'Missing uptime_seconds'
+          assert 'monitored_services' in data, 'Missing monitored_services'
+          assert 'scheduler_running' in data, 'Missing scheduler_running'
+          print(f'✅ GET /health — PASSED (v{data[\"version\"]}, uptime {data[\"uptime_seconds\"]}s, {data[\"monitored_services\"]} services)')
           "
 
       - name: "Test GET / (Dashboard)"
@@ -158,7 +275,6 @@ jobs:
           data = json.load(sys.stdin)
           assert 'services' in data, 'Missing services'
           assert 'overall_status' in data, 'Missing overall_status'
-          # Verify services were actually checked (status changed from unknown)
           checked = [s for s in data['services'] if s['status'] != 'unknown']
           print(f'✅ POST /api/check-all — PASSED ({len(data[\"services\"])} services, {len(checked)} checked)')
           "
@@ -234,6 +350,42 @@ jobs:
             exit 1
           fi
 
+      - name: "Test SSRF protection (block metadata endpoint)"
+        run: |
+          status_code=$(curl -o /dev/null -s -w "%{http_code}" -X POST http://localhost:5000/api/services \
+            -H "Content-Type: application/json" \
+            -d '{"name":"SSRF","url":"http://169.254.169.254/latest/meta-data/"}')
+          if [ "$status_code" = "400" ]; then
+            echo "✅ SSRF protection — PASSED (blocked metadata URL)"
+          else
+            echo "❌ SSRF protection — FAILED (expected 400, got $status_code)"
+            exit 1
+          fi
+
+      - name: "Test SSRF protection (block localhost)"
+        run: |
+          status_code=$(curl -o /dev/null -s -w "%{http_code}" -X POST http://localhost:5000/api/services \
+            -H "Content-Type: application/json" \
+            -d '{"name":"SSRF2","url":"http://127.0.0.1:6379/"}')
+          if [ "$status_code" = "400" ]; then
+            echo "✅ SSRF protection — PASSED (blocked localhost)"
+          else
+            echo "❌ SSRF protection — FAILED (expected 400, got $status_code)"
+            exit 1
+          fi
+
+      - name: "Test invalid ping interval"
+        run: |
+          status_code=$(curl -o /dev/null -s -w "%{http_code}" -X POST http://localhost:5000/api/ping-interval \
+            -H "Content-Type: application/json" \
+            -d '{"interval": 999}')
+          if [ "$status_code" = "400" ]; then
+            echo "✅ Invalid interval — PASSED (rejected 999 with HTTP 400)"
+          else
+            echo "❌ Invalid interval — FAILED (expected 400, got $status_code)"
+            exit 1
+          fi
+
       - name: Container logs (debug)
         if: always()
         run: docker logs shellty-pulse-test
@@ -249,6 +401,7 @@ jobs:
     name: "\U0001F419 Docker Compose Test"
     runs-on: ubuntu-latest
     needs: lint
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -271,13 +424,30 @@ jobs:
           docker compose logs
           exit 1
 
-      - name: Verify health endpoint
+      - name: Verify Docker Compose HEALTHCHECK status
+        run: |
+          echo "Waiting for Docker Compose HEALTHCHECK..."
+          for i in $(seq 1 20); do
+            status=$(docker inspect --format='{{.State.Health.Status}}' shellty-pulse 2>/dev/null || echo "none")
+            if [ "$status" = "healthy" ]; then
+              echo "✅ Compose HEALTHCHECK — PASSED (healthy after ~${i}×3s)"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "❌ Compose HEALTHCHECK — FAILED (status: $status)"
+          docker inspect --format='{{json .State.Health}}' shellty-pulse
+          exit 1
+
+      - name: Verify health endpoint (enriched)
         run: |
           curl -sf http://localhost:5000/health | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
           assert data['status'] == 'ok'
-          print('✅ Health endpoint OK')
+          assert 'version' in data
+          assert data['scheduler_running'] == True
+          print(f'✅ Health endpoint OK (v{data[\"version\"]})')
           "
 
       - name: Verify preloaded services (4 services from compose)

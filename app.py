@@ -13,8 +13,17 @@ Features:
     - Configurable ping interval: 10 min / 15 min / 30 min / 1 hour
     - Frontend URL linking for each monitored service
 
+Architecture notes:
+    - Uses application factory pattern (create_app) for testability
+    - In-memory data store — state resets on restart
+    - Background scheduler for periodic health checks
+    - MUST run with a single gunicorn worker (-w 1) because of
+      in-memory state and background scheduler
+
 Author: Shellty IT
 """
+
+from __future__ import annotations
 
 # ============================================
 # Imports
@@ -23,13 +32,23 @@ import os
 import json
 import uuid
 import time
+import signal
+import atexit
 import logging
+import ipaddress
 import threading
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
-import requests as http_requests
+import requests
 from flask import Flask, jsonify, request, render_template_string
 from apscheduler.schedulers.background import BackgroundScheduler
+
+# ============================================
+# Application Metadata
+# ============================================
+__version__ = "1.0.0"
+APP_START_TIME = time.time()
 
 # ============================================
 # Logging Configuration
@@ -44,11 +63,12 @@ logger = logging.getLogger("shellty-pulse")
 # ============================================
 # Configuration from Environment Variables
 # ============================================
+PORT = int(os.environ.get("PORT", 5000))
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 10))
+MAX_SERVICES = int(os.environ.get("MAX_SERVICES", 50))
+MAX_NAME_LENGTH = 100
+MAX_URL_LENGTH = 2048
 SERVICES_JSON = os.environ.get("SERVICES", "[]")
-
-# Mutable ping interval — can be changed via API at runtime
-ping_interval: int = int(os.environ.get("PING_INTERVAL", 600))
 
 # Available intervals for the dashboard selector (seconds → label)
 AVAILABLE_INTERVALS = {
@@ -58,24 +78,35 @@ AVAILABLE_INTERVALS = {
     3600: "1 hour",
 }
 
-# Maximum allowed lengths for user input
-MAX_NAME_LENGTH = 100
-MAX_URL_LENGTH = 2048
+# SSRF protection — blocked hostnames and metadata endpoints
+BLOCKED_HOSTS = frozenset({
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "169.254.169.254",
+    "metadata.google.internal",
+})
 
 # ============================================
-# In-Memory Data Store
+# In-Memory Data Store (thread-safe access)
 # ============================================
 services: list[dict] = []
 services_lock = threading.Lock()
+
+# Mutable runtime settings — always access under services_lock
+ping_interval: int = int(os.environ.get("PING_INTERVAL", 900))
 auto_ping_enabled: bool = True
 last_check_time: str | None = None
 
-# Global scheduler reference (initialized in start_app)
+# Global scheduler reference (initialized in start_background_services)
 scheduler: BackgroundScheduler | None = None
 
 # ============================================
 # Dashboard HTML Template
 # ============================================
+# Stored inline to comply with single-file constraint.
+# In production, this would be in templates/dashboard.html
+# using render_template() instead of render_template_string().
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -817,12 +848,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 
 # ============================================
-# Flask Application
-# ============================================
-app = Flask(__name__)
-
-
-# ============================================
 # Helper Functions
 # ============================================
 
@@ -842,11 +867,11 @@ def determine_status(response_time_seconds, success):
         HTTP error/timeout → down
 
     Args:
-        response_time_seconds: float, elapsed time in seconds
-        success: bool, True if HTTP 200
+        response_time_seconds: elapsed time in seconds
+        success: True if HTTP 200
 
     Returns:
-        str: status string
+        Status string: operational | degraded | slow | down
     """
     if not success:
         return "down"
@@ -894,7 +919,7 @@ def create_service(name, url, frontend_url=None):
         frontend_url: optional URL to the frontend application
 
     Returns:
-        dict: service record
+        Service record dict
     """
     return {
         "id": generate_id(),
@@ -910,22 +935,59 @@ def create_service(name, url, frontend_url=None):
     }
 
 
+def is_safe_url(url):
+    """
+    Basic SSRF protection — block internal, loopback, and metadata URLs.
+
+    Args:
+        url: URL string to validate
+
+    Returns:
+        True if URL is considered safe for external requests
+    """
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+
+        if not hostname:
+            return False
+
+        if hostname in BLOCKED_HOSTS:
+            return False
+
+        # Block private and reserved IP ranges
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local:
+                return False
+        except ValueError:
+            pass  # hostname is a domain name, not an IP — OK
+
+        return True
+    except Exception:
+        return False
+
+
 def check_single_service(service):
     """
     Perform HTTP GET health check on a single service.
 
     Measures response time, determines status, updates service record in-place.
+    Thread-safe: reads and writes under services_lock.
 
     Args:
-        service: dict — service record (modified in-place)
+        service: service record dict (modified in-place)
     """
-    url = service["url"]
-    name = service["name"]
+    # Thread-safe read of service data
+    with services_lock:
+        url = service["url"]
+        name = service["name"]
+
     logger.info("Checking service: %s (%s)", name, url)
 
     try:
         start = time.time()
-        response = http_requests.get(url, timeout=REQUEST_TIMEOUT)
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
         elapsed = time.time() - start
 
         success = response.status_code == 200
@@ -933,17 +995,23 @@ def check_single_service(service):
         response_time_ms = round(elapsed * 1000)
 
         if success:
-            logger.info("  ✓ %s → %s (HTTP %d, %dms)", name, status, response.status_code, response_time_ms)
+            logger.info(
+                "  ✓ %s → %s (HTTP %d, %dms)",
+                name, status, response.status_code, response_time_ms,
+            )
         else:
-            logger.warning("  ✗ %s → down (HTTP %d, %dms)", name, response.status_code, response_time_ms)
+            logger.warning(
+                "  ✗ %s → down (HTTP %d, %dms)",
+                name, response.status_code, response_time_ms,
+            )
 
-    except http_requests.exceptions.Timeout:
+    except requests.exceptions.Timeout:
         logger.error("  ✗ %s → down (timeout after %ds)", name, REQUEST_TIMEOUT)
         status = "down"
         response_time_ms = None
         success = False
 
-    except http_requests.exceptions.RequestException as exc:
+    except requests.exceptions.RequestException as exc:
         logger.error("  ✗ %s → down (error: %s)", name, str(exc))
         status = "down"
         response_time_ms = None
@@ -957,7 +1025,6 @@ def check_single_service(service):
         service["total_checks"] += 1
         if success:
             service["successful_checks"] += 1
-        # Recalculate uptime percentage
         if service["total_checks"] > 0:
             service["uptime_percent"] = round(
                 (service["successful_checks"] / service["total_checks"]) * 100, 2
@@ -983,14 +1050,19 @@ def check_all_services():
     for svc in snapshot:
         check_single_service(svc)
 
-    last_check_time = datetime.now(timezone.utc).isoformat()
+    with services_lock:
+        last_check_time = datetime.now(timezone.utc).isoformat()
+
     logger.info("Health check complete.")
     logger.info("=" * 50)
 
 
 def scheduled_check():
-    """Scheduler wrapper — respects auto_ping_enabled flag."""
-    if auto_ping_enabled:
+    """Scheduler wrapper — respects auto_ping_enabled flag (thread-safe read)."""
+    with services_lock:
+        enabled = auto_ping_enabled
+
+    if enabled:
         check_all_services()
     else:
         logger.info("Auto-ping disabled — skipping scheduled check.")
@@ -1004,7 +1076,8 @@ def load_services_from_env():
     and optional "frontend_url" fields.
 
     Example:
-        [{"name": "App", "url": "https://api.example.com/health", "frontend_url": "https://example.com"}]
+        [{"name": "App", "url": "https://api.example.com/health",
+          "frontend_url": "https://example.com"}]
 
     Silently skips invalid entries.
     """
@@ -1035,257 +1108,363 @@ def load_services_from_env():
 
 
 # ============================================
-# Flask Routes
+# Graceful Shutdown Handler
 # ============================================
 
-@app.route("/")
-def dashboard():
-    """Serve the main dashboard HTML page."""
-    return render_template_string(DASHBOARD_HTML)
-
-
-@app.route("/health")
-def health():
+def graceful_shutdown(signum=None, frame=None):
     """
-    Self health check endpoint.
+    Handle graceful shutdown on SIGTERM/SIGINT.
 
-    Always returns HTTP 200 with JSON status.
-    Used by Docker HEALTHCHECK and external monitors.
+    Stops the background scheduler cleanly before process exit.
+    Called automatically via atexit and signal handlers.
     """
-    return jsonify({
-        "status": "ok",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "service": "shellty-pulse",
-    }), 200
+    logger.info("Shutting down gracefully...")
+    if scheduler and scheduler.running:
+        scheduler.shutdown(wait=False)
+        logger.info("Scheduler stopped.")
+    logger.info("Shutdown complete.")
 
 
-@app.route("/api/services", methods=["GET"])
-def get_services():
+# Register shutdown handlers
+atexit.register(graceful_shutdown)
+try:
+    signal.signal(signal.SIGTERM, graceful_shutdown)
+    signal.signal(signal.SIGINT, graceful_shutdown)
+except (ValueError, OSError):
+    # signal.signal() can only be called from main thread
+    pass
+
+
+# ============================================
+# Application Factory
+# ============================================
+
+def create_app(testing=False):
     """
-    List all monitored services with their current statuses.
+    Flask application factory.
 
-    Returns JSON with services array and meta information
-    (overall status, auto-ping state, timing info).
+    Creates and configures the Flask app with all routes registered.
+    When testing=True, skips background services (scheduler, initial check).
+
+    Args:
+        testing: if True, skip scheduler and initial health checks
+
+    Returns:
+        Configured Flask application instance
+
+    Example test usage:
+        app = create_app(testing=True)
+        client = app.test_client()
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json["status"] == "ok"
     """
-    with services_lock:
-        services_data = [svc.copy() for svc in services]
+    application = Flask(__name__)
 
-    return jsonify({
-        "services": services_data,
-        "meta": {
-            "overall_status": get_overall_status(),
-            "auto_ping_enabled": auto_ping_enabled,
-            "ping_interval": ping_interval,
-            "last_check": last_check_time,
-            "total_services": len(services_data),
-        },
-    })
+    # ------------------------------------------
+    # Routes
+    # ------------------------------------------
 
+    @application.route("/")
+    def dashboard():
+        """Serve the main dashboard HTML page."""
+        return render_template_string(DASHBOARD_HTML)
 
-@app.route("/api/services", methods=["POST"])
-def add_service():
-    """
-    Add a new service to monitor.
+    @application.route("/health")
+    def health():
+        """
+        Self health check endpoint.
 
-    Expects JSON body:
-        {
-            "name": "Service Name",                          (required)
-            "url": "https://example.com/health",             (required)
-            "frontend_url": "https://example.com"            (optional)
-        }
+        Always returns HTTP 200 with JSON status.
+        Used by Docker HEALTHCHECK, load balancers, and external monitors.
+        """
+        with services_lock:
+            total = len(services)
 
-    Returns created service with HTTP 201.
-    """
-    data = request.get_json(silent=True)
+        return jsonify({
+            "status": "ok",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "service": "shellty-pulse",
+            "version": __version__,
+            "uptime_seconds": round(time.time() - APP_START_TIME),
+            "monitored_services": total,
+            "scheduler_running": scheduler.running if scheduler else False,
+        }), 200
 
-    if not data:
-        return jsonify({"error": "Request body must be valid JSON."}), 400
+    @application.route("/api/services", methods=["GET"])
+    def get_services():
+        """
+        List all monitored services with their current statuses.
 
-    name = data.get("name", "").strip()
-    url = data.get("url", "").strip()
-    frontend_url = data.get("frontend_url", "").strip() or None
+        Returns JSON with services array and meta information
+        (overall status, auto-ping state, timing info).
+        """
+        with services_lock:
+            services_data = [svc.copy() for svc in services]
+            current_interval = ping_interval
+            current_auto_ping = auto_ping_enabled
+            current_last_check = last_check_time
 
-    if not name or not url:
-        return jsonify({"error": "Both 'name' and 'url' are required."}), 400
+        return jsonify({
+            "services": services_data,
+            "meta": {
+                "overall_status": get_overall_status(),
+                "auto_ping_enabled": current_auto_ping,
+                "ping_interval": current_interval,
+                "last_check": current_last_check,
+                "total_services": len(services_data),
+            },
+        })
 
-    if len(name) > MAX_NAME_LENGTH:
-        return jsonify({"error": f"Name must be at most {MAX_NAME_LENGTH} characters."}), 400
+    @application.route("/api/services", methods=["POST"])
+    def add_service_route():
+        """
+        Add a new service to monitor.
 
-    if len(url) > MAX_URL_LENGTH:
-        return jsonify({"error": f"URL must be at most {MAX_URL_LENGTH} characters."}), 400
+        Expects JSON body:
+            {
+                "name": "Service Name",                  (required)
+                "url": "https://example.com/health",     (required)
+                "frontend_url": "https://example.com"    (optional)
+            }
 
-    if not url.startswith(("http://", "https://")):
-        return jsonify({"error": "URL must start with http:// or https://"}), 400
+        Returns created service with HTTP 201.
+        """
+        data = request.get_json(silent=True)
 
-    if frontend_url and not frontend_url.startswith(("http://", "https://")):
-        return jsonify({"error": "Frontend URL must start with http:// or https://"}), 400
+        if not data:
+            return jsonify({"error": "Request body must be valid JSON."}), 400
 
-    if frontend_url and len(frontend_url) > MAX_URL_LENGTH:
-        return jsonify({"error": f"Frontend URL must be at most {MAX_URL_LENGTH} characters."}), 400
+        name = data.get("name", "").strip()
+        url = data.get("url", "").strip()
+        frontend_url = data.get("frontend_url", "").strip() or None
 
-    svc = create_service(name, url, frontend_url)
+        # --- Validation ---
+        if not name or not url:
+            return jsonify({"error": "Both 'name' and 'url' are required."}), 400
 
-    with services_lock:
-        services.append(svc)
+        if len(name) > MAX_NAME_LENGTH:
+            return jsonify({
+                "error": f"Name must be at most {MAX_NAME_LENGTH} characters."
+            }), 400
 
-    logger.info("Added service: %s → %s (id: %s)", name, url, svc["id"])
-    return jsonify(svc), 201
+        if len(url) > MAX_URL_LENGTH:
+            return jsonify({
+                "error": f"URL must be at most {MAX_URL_LENGTH} characters."
+            }), 400
 
+        if not url.startswith(("http://", "https://")):
+            return jsonify({"error": "URL must start with http:// or https://"}), 400
 
-@app.route("/api/services/<service_id>", methods=["DELETE"])
-def delete_service(service_id):
-    """
-    Remove a service by its ID.
+        if not is_safe_url(url):
+            return jsonify({"error": "URL points to a blocked or internal address."}), 400
 
-    Returns HTTP 204 on success, 404 if not found.
-    """
-    with services_lock:
-        for i, svc in enumerate(services):
-            if svc["id"] == service_id:
-                removed = services.pop(i)
-                logger.info("Deleted service: %s (id: %s)", removed["name"], service_id)
-                return "", 204
+        if frontend_url:
+            if not frontend_url.startswith(("http://", "https://")):
+                return jsonify({
+                    "error": "Frontend URL must start with http:// or https://"
+                }), 400
+            if len(frontend_url) > MAX_URL_LENGTH:
+                return jsonify({
+                    "error": f"Frontend URL must be at most {MAX_URL_LENGTH} characters."
+                }), 400
 
-    return jsonify({"error": "Service not found."}), 404
+        # --- Create & store ---
+        svc = create_service(name, url, frontend_url)
 
+        with services_lock:
+            if len(services) >= MAX_SERVICES:
+                return jsonify({
+                    "error": f"Maximum {MAX_SERVICES} services allowed."
+                }), 400
+            services.append(svc)
 
-@app.route("/api/services/<service_id>/check", methods=["POST"])
-def check_service_endpoint(service_id):
-    """
-    Manually trigger health check for a single service.
+        logger.info("Added service: %s → %s (id: %s)", name, url, svc["id"])
+        return jsonify(svc), 201
 
-    Returns updated service data.
-    """
-    target = None
-    with services_lock:
-        for svc in services:
-            if svc["id"] == service_id:
-                target = svc
-                break
+    @application.route("/api/services/<service_id>", methods=["DELETE"])
+    def delete_service_route(service_id):
+        """
+        Remove a service by its ID.
 
-    if not target:
+        Returns HTTP 204 on success, 404 if not found.
+        """
+        with services_lock:
+            for i, svc in enumerate(services):
+                if svc["id"] == service_id:
+                    removed = services.pop(i)
+                    logger.info(
+                        "Deleted service: %s (id: %s)", removed["name"], service_id
+                    )
+                    return "", 204
+
         return jsonify({"error": "Service not found."}), 404
 
-    check_single_service(target)
+    @application.route("/api/services/<service_id>/check", methods=["POST"])
+    def check_service_route(service_id):
+        """
+        Manually trigger health check for a single service.
 
-    with services_lock:
-        return jsonify(target.copy())
+        Returns updated service data.
+        """
+        target = None
+        with services_lock:
+            for svc in services:
+                if svc["id"] == service_id:
+                    target = svc
+                    break
 
+        if not target:
+            return jsonify({"error": "Service not found."}), 404
 
-@app.route("/api/check-all", methods=["POST"])
-def check_all_endpoint():
-    """
-    Manually trigger health check for all services.
+        check_single_service(target)
 
-    Returns updated services list with overall status.
-    """
-    check_all_services()
+        with services_lock:
+            return jsonify(target.copy())
 
-    with services_lock:
-        services_data = [svc.copy() for svc in services]
+    @application.route("/api/check-all", methods=["POST"])
+    def check_all_route():
+        """
+        Manually trigger health check for all services.
 
-    return jsonify({
-        "message": "All services checked.",
-        "services": services_data,
-        "overall_status": get_overall_status(),
-    })
+        Returns updated services list with overall status.
+        """
+        check_all_services()
 
+        with services_lock:
+            services_data = [svc.copy() for svc in services]
 
-@app.route("/api/toggle-auto-ping", methods=["POST"])
-def toggle_auto_ping():
-    """
-    Toggle automatic periodic health checking on/off.
-
-    Returns current auto-ping state.
-    """
-    global auto_ping_enabled
-    auto_ping_enabled = not auto_ping_enabled
-    state = "enabled" if auto_ping_enabled else "disabled"
-    logger.info("Auto-ping toggled: %s", state)
-
-    return jsonify({
-        "auto_ping_enabled": auto_ping_enabled,
-        "message": f"Auto-ping {state}.",
-    })
-
-
-@app.route("/api/ping-interval", methods=["POST"])
-def set_ping_interval():
-    """
-    Change the auto-ping interval.
-
-    Accepts JSON: {"interval": 600}
-    Valid values: 600 (10 min), 900 (15 min), 1800 (30 min), 3600 (1 hour).
-    Reschedules the background job immediately.
-    """
-    global ping_interval
-
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Request body must be valid JSON."}), 400
-
-    new_interval = data.get("interval")
-    if new_interval not in AVAILABLE_INTERVALS:
-        valid = [f"{v} ({k}s)" for k, v in AVAILABLE_INTERVALS.items()]
         return jsonify({
-            "error": f"Invalid interval. Valid options: {', '.join(valid)}"
-        }), 400
+            "message": "All services checked.",
+            "services": services_data,
+            "overall_status": get_overall_status(),
+        })
 
-    ping_interval = new_interval
+    @application.route("/api/toggle-auto-ping", methods=["POST"])
+    def toggle_auto_ping_route():
+        """
+        Toggle automatic periodic health checking on/off.
 
-    # Reschedule background job with new interval
-    if scheduler:
-        scheduler.reschedule_job(
-            "health_check_job",
-            trigger="interval",
-            seconds=ping_interval,
-        )
+        Returns current auto-ping state.
+        """
+        global auto_ping_enabled
 
-    label = AVAILABLE_INTERVALS[ping_interval]
-    logger.info("Ping interval changed to %s (%ds)", label, ping_interval)
+        with services_lock:
+            auto_ping_enabled = not auto_ping_enabled
+            state = "enabled" if auto_ping_enabled else "disabled"
 
-    return jsonify({
-        "interval": ping_interval,
-        "label": label,
-        "message": f"Auto-ping interval set to {label}.",
-    })
+        logger.info("Auto-ping toggled: %s", state)
+
+        return jsonify({
+            "auto_ping_enabled": auto_ping_enabled,
+            "message": f"Auto-ping {state}.",
+        })
+
+    @application.route("/api/ping-interval", methods=["POST"])
+    def set_ping_interval_route():
+        """
+        Change the auto-ping interval.
+
+        Accepts JSON: {"interval": 600}
+        Valid values: 600 (10 min), 900 (15 min), 1800 (30 min), 3600 (1 hour).
+        Reschedules the background job immediately.
+        """
+        global ping_interval
+
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({"error": "Request body must be valid JSON."}), 400
+
+        new_interval = data.get("interval")
+        if new_interval not in AVAILABLE_INTERVALS:
+            valid = [f"{v} ({k}s)" for k, v in AVAILABLE_INTERVALS.items()]
+            return jsonify({
+                "error": f"Invalid interval. Valid options: {', '.join(valid)}"
+            }), 400
+
+        with services_lock:
+            ping_interval = new_interval
+
+        # Reschedule background job with new interval
+        if scheduler and scheduler.running:
+            scheduler.reschedule_job(
+                "health_check_job",
+                trigger="interval",
+                seconds=new_interval,
+            )
+
+        label = AVAILABLE_INTERVALS[new_interval]
+        logger.info("Ping interval changed to %s (%ds)", label, new_interval)
+
+        return jsonify({
+            "interval": new_interval,
+            "label": label,
+            "message": f"Auto-ping interval set to {label}.",
+        })
+
+    return application
 
 
 # ============================================
-# Application Initialization (module-level)
+# Background Services Startup
 # ============================================
-# Runs on import (gunicorn) and direct execution (python app.py).
-# Ensures scheduler and services work in both scenarios.
 
-logger.info("=" * 50)
-logger.info("  Starting Shellty Pulse — Service Health Monitor")
-logger.info("=" * 50)
-logger.info("Configuration:")
-logger.info("  PING_INTERVAL:   %d seconds (%d min)", ping_interval, ping_interval // 60)
-logger.info("  REQUEST_TIMEOUT: %d seconds", REQUEST_TIMEOUT)
+def start_background_services():
+    """
+    Initialize background scheduler and run initial health check.
 
-load_services_from_env()
+    Separated from create_app() so that tests can create the app
+    without triggering background HTTP requests or timers.
+    """
+    global scheduler
 
-scheduler = BackgroundScheduler(daemon=True)
-scheduler.add_job(
-    func=scheduled_check,
-    trigger="interval",
-    seconds=ping_interval,
-    id="health_check_job",
-    name="Periodic Health Check",
-    replace_existing=True,
-)
-scheduler.start()
-logger.info("Scheduler started — checking every %d seconds.", ping_interval)
+    logger.info("=" * 50)
+    logger.info("  Starting Shellty Pulse — Service Health Monitor")
+    logger.info("  Version: %s", __version__)
+    logger.info("=" * 50)
+    logger.info("Configuration:")
+    logger.info("  PORT:            %d", PORT)
+    logger.info("  PING_INTERVAL:   %d seconds (%d min)", ping_interval, ping_interval // 60)
+    logger.info("  REQUEST_TIMEOUT: %d seconds", REQUEST_TIMEOUT)
+    logger.info("  MAX_SERVICES:    %d", MAX_SERVICES)
 
-threading.Thread(target=check_all_services, daemon=True).start()
-logger.info("Initial health check started in background.")
-logger.info("=" * 50)
+    load_services_from_env()
+
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(
+        func=scheduled_check,
+        trigger="interval",
+        seconds=ping_interval,
+        id="health_check_job",
+        name="Periodic Health Check",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info("Scheduler started — checking every %d seconds.", ping_interval)
+
+    # Run first health check in background thread (non-blocking)
+    threading.Thread(target=check_all_services, daemon=True).start()
+    logger.info("Initial health check started in background.")
+    logger.info("=" * 50)
+
+
+# ============================================
+# Module-Level Initialization
+# ============================================
+# Detect testing mode via environment variable.
+# In tests: set TESTING=1 before importing this module.
+# In production: gunicorn imports this module normally.
+
+_testing = os.environ.get("TESTING", "").lower() in ("1", "true")
+app = create_app(testing=_testing)
+
+if not _testing:
+    start_background_services()
 
 
 # ============================================
 # Direct Execution (development only)
 # ============================================
 if __name__ == "__main__":
-    logger.info("Development mode — Dashboard: http://0.0.0.0:5000")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    logger.info("Development mode — Dashboard: http://0.0.0.0:%d", PORT)
+    app.run(host="0.0.0.0", port=PORT, debug=False)
