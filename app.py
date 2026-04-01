@@ -543,8 +543,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <input type="text" id="new-frontend-url" placeholder="Frontend URL — optional" maxlength="2048" />
                 <button class="btn primary" onclick="addService()">Add</button>
             </div>
-            <p class="add-note">⚠ Services added here are stored in memory and will be reset on container restart.
-            To add permanently, update the SERVICES variable in docker-compose.yml.</p>
+            <p class="add-note">⚠ Services added here are stored in memory and will be reset on application restart.</p>
         </div>
 
         <footer>
