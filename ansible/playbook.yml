@@ -27,8 +27,10 @@
     app_name: "shellty-pulse"
     app_port: 5000
     app_image: "shellty-pulse"
-    ping_interval: "600"
+    app_version: "1.0.0"
+    ping_interval: "900"
     request_timeout: "10"
+    max_services: "50"
     preloaded_services: >-
       [
         {"name":"KSeF Master","url":"https://ksef-master-backend.onrender.com/health","frontend_url":"https://ksef-master.netlify.app/"},
@@ -55,6 +57,15 @@
       tags: [docker, setup]
 
   # ----------------------------------------
+  # Handlers
+  # ----------------------------------------
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.service:
+        name: docker
+        state: restarted
+
+  # ----------------------------------------
   # Tasks
   # ----------------------------------------
   tasks:
@@ -75,7 +86,6 @@
           - curl
           - gnupg
           - lsb-release
-          - python3-pip
         state: present
       tags: [docker, setup]
 
@@ -110,6 +120,7 @@
           - containerd.io
         state: present
         update_cache: true
+      notify: Restart Docker
       tags: [docker, setup]
 
     - name: Ensure Docker service is running
@@ -119,11 +130,10 @@
         enabled: true
       tags: [docker, setup]
 
-    - name: Install Python Docker SDK (for Ansible docker modules)
-      ansible.builtin.pip:
-        name: docker
+    - name: Install Python Docker SDK (system package — PEP 668 safe)
+      ansible.builtin.apt:
+        name: python3-docker
         state: present
-        executable: pip3
       tags: [docker, setup]
 
     # === Application Deployment ===
@@ -159,23 +169,20 @@
         force_source: true
       tags: [deploy]
 
-    - name: Stop and remove existing container (if any)
-      community.docker.docker_container:
-        name: "{{ app_name }}"
-        state: absent
-      tags: [deploy]
-
-    - name: Run Shellty Pulse container
+    - name: Deploy Shellty Pulse container
       community.docker.docker_container:
         name: "{{ app_name }}"
         image: "{{ app_image }}:latest"
         state: started
+        recreate: true
         restart_policy: unless-stopped
         ports:
           - "{{ app_port }}:5000"
         env:
+          PORT: "5000"
           PING_INTERVAL: "{{ ping_interval }}"
           REQUEST_TIMEOUT: "{{ request_timeout }}"
+          MAX_SERVICES: "{{ max_services }}"
           PYTHONUNBUFFERED: "1"
           SERVICES: "{{ preloaded_services }}"
         healthcheck:
@@ -205,8 +212,20 @@
         msg: >
           ✅ Shellty Pulse is running!
           Status: {{ health_result.json.status }}
+          Version: {{ health_result.json.version }}
+          Uptime: {{ health_result.json.uptime_seconds }}s
+          Scheduler: {{ health_result.json.scheduler_running }}
           Timestamp: {{ health_result.json.timestamp }}
           Dashboard: http://{{ ansible_default_ipv4.address | default('localhost') }}:{{ app_port }}
+      tags: [verify]
+
+    - name: Verify application version matches expected
+      ansible.builtin.assert:
+        that:
+          - health_result.json.version == app_version
+        fail_msg: >
+          Version mismatch! Expected {{ app_version }},
+          got {{ health_result.json.version }}
       tags: [verify]
 
     - name: Verify services are loaded
