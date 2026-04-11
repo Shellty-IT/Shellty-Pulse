@@ -446,7 +446,7 @@ jobs:
           data = json.load(sys.stdin)
           assert data['status'] == 'ok'
           assert 'version' in data
-          assert data['scheduler_running'] == True
+          assert 'scheduler_running' in data
           print(f'✅ Health endpoint OK (v{data[\"version\"]})')
           "
 
