@@ -76,8 +76,6 @@ AVAILABLE_INTERVALS = {
     900: "15 min",
     1800: "30 min",
     3600: "1 hour",
-    86400: "24 hours",
-    172800: "48 hours",
 }
 
 # SSRF protection — blocked hostnames and metadata endpoints
@@ -552,15 +550,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <button id="auto-ping-btn" class="btn active" onclick="toggleAutoPing()">
                 ⏱ Auto-Ping: ON
             </button>
-        <div class="interval-selector">
-    <span class="interval-label">Interval:</span>
-        <button class="interval-btn" data-interval="600" onclick="setPingInterval(600)">10 min</button>
-        <button class="interval-btn" data-interval="900" onclick="setPingInterval(900)">15 min</button>
-         <button class="interval-btn" data-interval="1800" onclick="setPingInterval(1800)">30 min</button>
-         <button class="interval-btn" data-interval="3600" onclick="setPingInterval(3600)">1 hour</button>
-            <button class="interval-btn" data-interval="86400" onclick="setPingInterval(86400)">24h</button>
-          <button class="interval-btn" data-interval="172800" onclick="setPingInterval(172800)">48h</button>
-        </div>
+            <div class="interval-selector">
+                <span class="interval-label">Interval:</span>
+                <button class="interval-btn" data-interval="600" onclick="setPingInterval(600)">10 min</button>
+                <button class="interval-btn" data-interval="900" onclick="setPingInterval(900)">15 min</button>
+                <button class="interval-btn" data-interval="1800" onclick="setPingInterval(1800)">30 min</button>
+                <button class="interval-btn" data-interval="3600" onclick="setPingInterval(3600)">1 hour</button>
+            </div>
             <div id="check-info" class="check-info">Loading...</div>
         </div>
 
@@ -639,9 +635,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
 
         function intervalLabel(seconds) {
-             if (seconds >= 86400) return Math.round(seconds / 86400) + 'd';
-             if (seconds >= 3600) return Math.round(seconds / 3600) + 'h';
-         return Math.round(seconds / 60) + ' min';
+            if (seconds >= 3600) return Math.round(seconds / 3600) + 'h';
+            return Math.round(seconds / 60) + ' min';
         }
 
         /* ========================================
@@ -786,16 +781,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 var ago = timeAgo(meta.last_check);
                 if (meta.auto_ping_enabled) {
                     var elapsed = (Date.now() - new Date(meta.last_check).getTime()) / 1000;
-                var remainSec = Math.max(0, meta.ping_interval - elapsed);
-                var remainText;
-                if (remainSec >= 86400) {
-                    remainText = Math.round(remainSec / 86400) + 'd';
-                } else if (remainSec >= 3600) {
-                    remainText = Math.round(remainSec / 3600) + 'h';
-                } else {
-                    remainText = Math.round(remainSec / 60) + ' min';
-                }
-                ci.textContent = 'Last check: ' + ago + ' · Next in: ~' + remainText + ' · Auto-ping every ' + intLabel;
+                    var remain  = Math.max(0, Math.round((meta.ping_interval - elapsed) / 60));
+                    ci.textContent = 'Last check: ' + ago + ' · Next in: ~' + remain + ' min · Auto-ping every ' + intLabel;
                 } else {
                     ci.textContent = 'Last check: ' + ago + ' · Auto-ping disabled';
                 }
