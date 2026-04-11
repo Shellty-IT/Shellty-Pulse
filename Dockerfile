@@ -36,6 +36,7 @@ RUN pip install \
 
 # --- Application code ---
 COPY --chown=pulse:pulse app.py .
+COPY --chown=pulse:pulse pulse/ ./pulse/
 
 # --- Switch to non-root ---
 USER pulse
