@@ -45,6 +45,11 @@ jobs:
             --name ${{ env.AZURE_WEBAPP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --runtime "PYTHON:3.12"
+
+          az webapp config set \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --startup-file "gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 30 --chdir /home/site/wwwroot --pythonpath /home/site/wwwroot app:app"
         timeout-minutes: 10
 
       - name: Verify deployment
