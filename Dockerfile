@@ -24,7 +24,6 @@ RUN groupadd -r pulse && \
 WORKDIR /app
 
 # --- Python dependencies ---
-# Versions must match CI workflow (.github/workflows/ci.yml)
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
@@ -37,6 +36,10 @@ RUN pip install \
 # --- Application code ---
 COPY --chown=pulse:pulse app.py .
 COPY --chown=pulse:pulse pulse/ ./pulse/
+COPY --chown=pulse:pulse startup.sh .
+
+# Make startup.sh executable
+RUN chmod +x startup.sh
 
 # --- Switch to non-root ---
 USER pulse
@@ -54,9 +57,5 @@ ENV PORT=5000 \
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=15s \
     CMD curl -f http://localhost:5000/health || exit 1
 
-# NOTE: Must use --workers 1 (in-memory state + background scheduler)
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", \
-     "--workers", "1", "--threads", "2", \
-     "--timeout", "30", "--graceful-timeout", "10", \
-     "--access-logfile", "-", \
-     "app:app"]
+# Use startup script instead of direct gunicorn
+CMD ["./startup.sh"]
