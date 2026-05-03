@@ -65,6 +65,12 @@ curl -sf -X POST http://localhost:5000/api/services \
   -d '{"name":"Shellty Kanban","url":"https://shellty-kanban.onrender.com/health","frontend_url":"https://shellty-kanban.netlify.app/","interval":300}' \
   && echo "  ✓ Shellty Kanban" || echo "  ✗ Shellty Kanban FAILED"
 
+# Shellty Pulse (self-monitor)
+curl -sf -X POST http://localhost:5000/api/services \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Shellty Pulse","url":"https://shellty-pulse.onrender.com/health","interval":300}' \
+  && echo "  ✓ Shellty Pulse" || echo "  ✗ Shellty Pulse FAILED"
+
 echo ""
 echo "✅ All services initialized!"
 echo "🌐 Shellty Pulse is running on http://0.0.0.0:5000"
