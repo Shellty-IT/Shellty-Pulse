@@ -1,60 +1,61 @@
-# ============================================
+# ===========================================
 # Shellty Pulse — Service Health Monitor
-# Optimized Docker image with security best practices
-# ============================================
+# ===========================================
 
-# --- Base image ---
 FROM python:3.12-slim
 
-# --- Metadata ---
-LABEL maintainer="Shellty IT"
-LABEL description="Shellty Pulse — Service Health Monitor"
-LABEL version="1.0"
+# --- OCI Metadata ---
+LABEL maintainer="Shellty IT" \
+      description="Shellty Pulse — Service Health Monitor" \
+      version="1.0.0" \
+      org.opencontainers.image.title="Shellty Pulse" \
+      org.opencontainers.image.source="https://github.com/YOUR-REPO"
 
 # --- System dependencies ---
-# curl is needed for Docker HEALTHCHECK (not included in slim)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# --- Non-root user for security ---
+# --- Non-root user ---
 RUN groupadd -r pulse && \
     useradd -r -g pulse -d /app -s /sbin/nologin pulse
 
-# --- Working directory ---
 WORKDIR /app
 
 # --- Python dependencies ---
-# Installed inline (no requirements.txt needed for 3 packages)
-# Pinned versions for reproducible builds
-RUN pip install --no-cache-dir --no-compile \
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN pip install \
     flask==3.1.1 \
     apscheduler==3.10.4 \
-    requests==2.32.3
+    requests==2.32.3 \
+    gunicorn==23.0.0
 
 # --- Application code ---
-COPY app.py .
+COPY --chown=pulse:pulse app.py .
+COPY --chown=pulse:pulse pulse/ ./pulse/
+COPY --chown=pulse:pulse startup.sh .
 
-# --- Set ownership ---
-RUN chown -R pulse:pulse /app
+# Make startup.sh executable
+RUN chmod +x startup.sh
 
-# --- Switch to non-root user ---
+# --- Switch to non-root ---
 USER pulse
 
-# --- Port exposure ---
+# --- Runtime configuration ---
 EXPOSE 5000
+STOPSIGNAL SIGTERM
 
-# --- Health check ---
-# Docker will automatically monitor container health
-# Checks every 30s, timeout 10s, retries 3 times before marking unhealthy
+ENV PORT=5000 \
+    PING_INTERVAL=900 \
+    REQUEST_TIMEOUT=10 \
+    MAX_SERVICES=50 \
+    PYTHONUNBUFFERED=1
+
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=15s \
     CMD curl -f http://localhost:5000/health || exit 1
 
-# --- Default environment variables ---
-ENV PING_INTERVAL=600 \
-    REQUEST_TIMEOUT=10 \
-    PYTHONUNBUFFERED=1
-
-# --- Run application ---
-CMD ["python", "app.py"]
+# Use startup script instead of direct gunicorn
+CMD ["./startup.sh"]
