@@ -12,7 +12,7 @@ VERSION = "1.0.0"
 
 # ── Runtime settings from environment ───────────────────────────────────────
 PORT = int(os.environ.get("PORT", 5000))
-REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 10))
+REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 90))
 MAX_SERVICES = int(os.environ.get("MAX_SERVICES", 50))
 PING_INTERVAL_DEFAULT = int(os.environ.get("PING_INTERVAL", 900))
 SERVICES_JSON = os.environ.get("SERVICES", "[]")

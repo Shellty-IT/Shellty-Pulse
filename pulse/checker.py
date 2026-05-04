@@ -35,37 +35,66 @@ def check_single_service(service: dict) -> None:
 
     logger.info("Checking service: %s (%s)", name, url)
 
-    try:
-        start    = time.time()
-        response = requests.get(url, timeout=REQUEST_TIMEOUT)
-        elapsed  = time.time() - start
+    # ── RETRY LOGIC for cold start ──
+    max_retries = 2
+    success = False
+    status = "down"
+    response_time_ms = None
 
-        success          = response.status_code == 200
-        status           = determine_status(elapsed, success)
-        response_time_ms = round(elapsed * 1000)
+    for attempt in range(max_retries):
+        try:
+            start    = time.time()
+            response = requests.get(url, timeout=REQUEST_TIMEOUT)
+            elapsed  = time.time() - start
 
-        if success:
-            logger.info(
-                "  ✓ %s → %s (HTTP %d, %dms)",
-                name, status, response.status_code, response_time_ms,
-            )
-        else:
-            logger.warning(
-                "  ✗ %s → down (HTTP %d, %dms)",
-                name, response.status_code, response_time_ms,
-            )
+            success          = response.status_code == 200
+            status           = determine_status(elapsed, success)
+            response_time_ms = round(elapsed * 1000)
 
-    except requests.exceptions.Timeout:
-        logger.error("  ✗ %s → down (timeout after %ds)", name, REQUEST_TIMEOUT)
-        status           = "down"
-        response_time_ms = None
-        success          = False
+            if success:
+                logger.info(
+                    "  ✓ %s → %s (HTTP %d, %dms)",
+                    name, status, response.status_code, response_time_ms,
+                )
+                break  # Success - exit retry loop
+            else:
+                logger.warning(
+                    "  ✗ %s → down (HTTP %d, %dms)",
+                    name, response.status_code, response_time_ms,
+                )
+                # Don't retry for HTTP errors (4xx/5xx)
+                break
 
-    except requests.exceptions.RequestException as exc:
-        logger.error("  ✗ %s → down (error: %s)", name, exc)
-        status           = "down"
-        response_time_ms = None
-        success          = False
+        except requests.exceptions.Timeout:
+            if attempt < max_retries - 1:
+                logger.warning(
+                    "  ⏳ %s → timeout (attempt %d/%d), retrying in 5s...",
+                    name, attempt + 1, max_retries
+                )
+                time.sleep(5)  # Wait before retry
+                continue
+            else:
+                logger.error(
+                    "  ✗ %s → down (timeout after %ds)",
+                    name, REQUEST_TIMEOUT
+                )
+                status           = "down"
+                response_time_ms = None
+                success          = False
+
+        except requests.exceptions.RequestException as exc:
+            if attempt < max_retries - 1:
+                logger.warning(
+                    "  ⏳ %s → error (%s), retrying in 5s...",
+                    name, str(exc)[:80]
+                )
+                time.sleep(5)
+                continue
+            else:
+                logger.error("  ✗ %s → down (error: %s)", name, exc)
+                status           = "down"
+                response_time_ms = None
+                success          = False
 
     # ── Atomic update ────────────────────────────────────────────────────────
     with state.services_lock:
