@@ -23,19 +23,21 @@ def check_single_service(service: dict) -> None:
     """
     Run an HTTP GET health check on one service and update its record.
 
-    The service dict is mutated in-place under ``state.services_lock``.
-    Safe to call from multiple threads (each call locks independently).
+    ⚠️ Thread-safe: Reads data under lock, performs HTTP request WITHOUT lock,
+       then updates results under lock.
 
     Args:
         service: A service record dict (element of ``state.services``).
     """
+    # ── 1. Read data under lock (fast) ──
     with state.services_lock:
-        url  = service["url"]
+        url = service["url"]
         name = service["name"]
+        service_id = service["id"]
 
     logger.info("Checking service: %s (%s)", name, url)
 
-    # ── RETRY LOGIC for cold start ──
+    # ── 2. HTTP request WITHOUT lock (may take 90s) ──
     max_retries = 2
     success = False
     status = "down"
@@ -43,12 +45,12 @@ def check_single_service(service: dict) -> None:
 
     for attempt in range(max_retries):
         try:
-            start    = time.time()
+            start = time.time()
             response = requests.get(url, timeout=REQUEST_TIMEOUT)
-            elapsed  = time.time() - start
+            elapsed = time.time() - start
 
-            success          = response.status_code == 200
-            status           = determine_status(elapsed, success)
+            success = response.status_code == 200
+            status = determine_status(elapsed, success)
             response_time_ms = round(elapsed * 1000)
 
             if success:
@@ -56,13 +58,12 @@ def check_single_service(service: dict) -> None:
                     "  ✓ %s → %s (HTTP %d, %dms)",
                     name, status, response.status_code, response_time_ms,
                 )
-                break  # Success - exit retry loop
+                break
             else:
                 logger.warning(
                     "  ✗ %s → down (HTTP %d, %dms)",
                     name, response.status_code, response_time_ms,
                 )
-                # Don't retry for HTTP errors (4xx/5xx)
                 break
 
         except requests.exceptions.Timeout:
@@ -71,16 +72,16 @@ def check_single_service(service: dict) -> None:
                     "  ⏳ %s → timeout (attempt %d/%d), retrying in 5s...",
                     name, attempt + 1, max_retries
                 )
-                time.sleep(5)  # Wait before retry
+                time.sleep(5)
                 continue
             else:
                 logger.error(
                     "  ✗ %s → down (timeout after %ds)",
                     name, REQUEST_TIMEOUT
                 )
-                status           = "down"
+                status = "down"
                 response_time_ms = None
-                success          = False
+                success = False
 
         except requests.exceptions.RequestException as exc:
             if attempt < max_retries - 1:
@@ -92,24 +93,27 @@ def check_single_service(service: dict) -> None:
                 continue
             else:
                 logger.error("  ✗ %s → down (error: %s)", name, exc)
-                status           = "down"
+                status = "down"
                 response_time_ms = None
-                success          = False
+                success = False
 
-    # ── Atomic update ────────────────────────────────────────────────────────
+    # ── 3. Atomic update under lock (fast) ──
     with state.services_lock:
-        service["status"]           = status
-        service["response_time_ms"] = response_time_ms
-        service["last_check"]       = datetime.now(timezone.utc).isoformat()
-        service["total_checks"]    += 1
+        for svc in state.services:
+            if svc["id"] == service_id:
+                svc["status"] = status
+                svc["response_time_ms"] = response_time_ms
+                svc["last_check"] = datetime.now(timezone.utc).isoformat()
+                svc["total_checks"] += 1
 
-        if success:
-            service["successful_checks"] += 1
+                if success:
+                    svc["successful_checks"] += 1
 
-        if service["total_checks"] > 0:
-            service["uptime_percent"] = round(
-                (service["successful_checks"] / service["total_checks"]) * 100, 2
-            )
+                if svc["total_checks"] > 0:
+                    svc["uptime_percent"] = round(
+                        (svc["successful_checks"] / svc["total_checks"]) * 100, 2
+                    )
+                break
 
 
 def check_all_services() -> None:
