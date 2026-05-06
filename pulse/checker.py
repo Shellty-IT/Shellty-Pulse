@@ -23,7 +23,8 @@ def check_single_service(service: dict) -> None:
     """
     Run an HTTP GET health check on one service and update its record.
 
-    Handles HTTP 429 (rate limit) with retry and exponential backoff.
+    Uses browser-like User-Agent to avoid being blocked by CDN/hosting.
+    Handles HTTP 429 (rate limit) and 502/503 (cold start) with retry.
     Thread-safe: Reads data under lock, performs HTTP request WITHOUT lock,
     then updates results under lock.
 
@@ -38,16 +39,24 @@ def check_single_service(service: dict) -> None:
 
     logger.info("Checking service: %s (%s)", name, url)
 
-    # ── 2. HTTP request WITHOUT lock (may take 90s) ──
+    # ── 2. HTTP request with browser User-Agent ──
     max_retries = 3
     success = False
     status = "down"
     response_time_ms = None
 
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/html, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+    }
+
     for attempt in range(max_retries):
         try:
             start = time.time()
-            response = requests.get(url, timeout=REQUEST_TIMEOUT)
+            response = requests.get(url, timeout=REQUEST_TIMEOUT, headers=headers, allow_redirects=True)
             elapsed = time.time() - start
 
             # ── Handle HTTP 429 (Rate Limit) ──
@@ -69,6 +78,16 @@ def check_single_service(service: dict) -> None:
                     response_time_ms = None
                     success = False
                     break
+
+            # ── Handle HTTP 502/503 (Service starting - cold start) ──
+            if response.status_code in (502, 503):
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        "  ⏳ %s → service starting (HTTP %d), retrying in 10s...",
+                        name, response.status_code
+                    )
+                    time.sleep(10)  # Longer wait for cold start
+                    continue
 
             success = response.status_code == 200
             status = determine_status(elapsed, success)
