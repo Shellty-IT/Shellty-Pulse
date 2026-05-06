@@ -23,8 +23,9 @@ def check_single_service(service: dict) -> None:
     """
     Run an HTTP GET health check on one service and update its record.
 
-    ⚠️ Thread-safe: Reads data under lock, performs HTTP request WITHOUT lock,
-       then updates results under lock.
+    Handles HTTP 429 (rate limit) with retry and exponential backoff.
+    Thread-safe: Reads data under lock, performs HTTP request WITHOUT lock,
+    then updates results under lock.
 
     Args:
         service: A service record dict (element of ``state.services``).
@@ -38,7 +39,7 @@ def check_single_service(service: dict) -> None:
     logger.info("Checking service: %s (%s)", name, url)
 
     # ── 2. HTTP request WITHOUT lock (may take 90s) ──
-    max_retries = 2
+    max_retries = 3
     success = False
     status = "down"
     response_time_ms = None
@@ -48,6 +49,26 @@ def check_single_service(service: dict) -> None:
             start = time.time()
             response = requests.get(url, timeout=REQUEST_TIMEOUT)
             elapsed = time.time() - start
+
+            # ── Handle HTTP 429 (Rate Limit) ──
+            if response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 5))
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        "  ⏳ %s → rate limited (HTTP 429), waiting %ds before retry...",
+                        name, retry_after
+                    )
+                    time.sleep(retry_after)
+                    continue
+                else:
+                    logger.error(
+                        "  ✗ %s → rate limited (HTTP 429) after %d retries",
+                        name, max_retries
+                    )
+                    status = "down"
+                    response_time_ms = None
+                    success = False
+                    break
 
             success = response.status_code == 200
             status = determine_status(elapsed, success)
@@ -120,6 +141,7 @@ def check_all_services() -> None:
     """
     Run health checks on every registered service sequentially.
 
+    Adds 2-second delay between checks to avoid rate limiting (HTTP 429).
     Called by the scheduler (auto-ping) and by the manual
     ``POST /api/check-all`` endpoint.
     Updates ``state.last_check_time`` after all checks complete.
@@ -132,8 +154,13 @@ def check_all_services() -> None:
         "Starting health check for all services (%d total)", len(snapshot)
     )
 
-    for svc in snapshot:
+    for i, svc in enumerate(snapshot):
         check_single_service(svc)
+
+        # Add delay between checks to avoid rate limiting
+        if i < len(snapshot) - 1:  # Don't wait after last service
+            logger.info("  ⏱ Waiting 2s before next check...")
+            time.sleep(2)
 
     with state.services_lock:
         state.last_check_time = datetime.now(timezone.utc).isoformat()
