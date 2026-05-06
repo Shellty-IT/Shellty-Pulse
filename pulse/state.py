@@ -23,5 +23,5 @@ services: list[dict] = []
 
 # ── Runtime settings (always access under services_lock) ─────────────────────
 ping_interval: int = PING_INTERVAL_DEFAULT
-auto_ping_enabled: bool = True
+auto_ping_enabled: bool = False
 last_check_time: str | None = None
