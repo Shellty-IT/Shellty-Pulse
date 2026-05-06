@@ -40,7 +40,7 @@ def check_single_service(service: dict) -> None:
     logger.info("Checking service: %s (%s)", name, url)
 
     # ── 2. HTTP request with browser User-Agent ──
-    max_retries = 3
+    max_retries = 4  # Increased for cold start
     success = False
     status = "down"
     response_time_ms = None
@@ -82,12 +82,23 @@ def check_single_service(service: dict) -> None:
             # ── Handle HTTP 502/503 (Service starting - cold start) ──
             if response.status_code in (502, 503):
                 if attempt < max_retries - 1:
+                    # Progressive backoff: 15s, 25s, 35s
+                    wait_time = 15 + (attempt * 10)
                     logger.warning(
-                        "  ⏳ %s → service starting (HTTP %d), retrying in 10s...",
-                        name, response.status_code
+                        "  ⏳ %s → service starting (HTTP %d), retrying in %ds (attempt %d/%d)...",
+                        name, response.status_code, wait_time, attempt + 1, max_retries
                     )
-                    time.sleep(10)  # Longer wait for cold start
+                    time.sleep(wait_time)
                     continue
+                else:
+                    logger.error(
+                        "  ✗ %s → still starting (HTTP %d) after %d retries",
+                        name, response.status_code, max_retries
+                    )
+                    status = "down"
+                    response_time_ms = round(elapsed * 1000)
+                    success = False
+                    break
 
             success = response.status_code == 200
             status = determine_status(elapsed, success)
@@ -104,20 +115,21 @@ def check_single_service(service: dict) -> None:
                     "  ✗ %s → down (HTTP %d, %dms)",
                     name, response.status_code, response_time_ms,
                 )
+                # Don't retry for other HTTP errors (4xx, etc.)
                 break
 
         except requests.exceptions.Timeout:
             if attempt < max_retries - 1:
                 logger.warning(
-                    "  ⏳ %s → timeout (attempt %d/%d), retrying in 5s...",
+                    "  ⏳ %s → timeout (attempt %d/%d), retrying in 10s...",
                     name, attempt + 1, max_retries
                 )
-                time.sleep(5)
+                time.sleep(10)
                 continue
             else:
                 logger.error(
-                    "  ✗ %s → down (timeout after %ds)",
-                    name, REQUEST_TIMEOUT
+                    "  ✗ %s → down (timeout after %ds, %d retries)",
+                    name, REQUEST_TIMEOUT, max_retries
                 )
                 status = "down"
                 response_time_ms = None
@@ -126,10 +138,10 @@ def check_single_service(service: dict) -> None:
         except requests.exceptions.RequestException as exc:
             if attempt < max_retries - 1:
                 logger.warning(
-                    "  ⏳ %s → error (%s), retrying in 5s...",
+                    "  ⏳ %s → error (%s), retrying in 10s...",
                     name, str(exc)[:80]
                 )
-                time.sleep(5)
+                time.sleep(10)
                 continue
             else:
                 logger.error("  ✗ %s → down (error: %s)", name, exc)
