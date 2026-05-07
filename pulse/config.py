@@ -39,3 +39,9 @@ BLOCKED_HOSTS: frozenset[str] = frozenset({
     "169.254.169.254",
     "metadata.google.internal",
 })
+
+# ── Business Hours defaults ──────────────────────────────────────────────────
+BUSINESS_HOURS_ENABLED_DEFAULT: bool = False
+BUSINESS_HOURS_START_DEFAULT: int = 9
+BUSINESS_HOURS_END_DEFAULT: int = 15
+BUSINESS_HOURS_TIMEZONE: str = "Europe/Warsaw"

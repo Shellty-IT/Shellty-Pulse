@@ -1,0 +1,136 @@
+# .github/workflows/wake-shellty-pulse.yml
+# =============================================
+# Runs every 10 minutes.
+# Checks if business hours are enabled and current
+# time is within the configured range (CET).
+# If yes — wakes Shellty Pulse via /api/wake-and-check.
+# Shellty Pulse then decides whether to ping services
+# based on auto_ping_enabled and ping_interval.
+# =============================================
+
+name: Wake Shellty Pulse
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wake:
+    name: "🔔 Wake Shellty Pulse"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      APP_URL: https://shellty-pulse.onrender.com
+
+    steps:
+
+      - name: Fetch business hours config
+        id: config
+        run: |
+          echo "📡 Fetching Shellty Pulse config..."
+
+          # Try to reach the app — it may be sleeping (cold start up to 50s on Render)
+          response=""
+          for i in 1 2 3; do
+            response=$(curl -sf --max-time 60 "$APP_URL/api/services" || echo "")
+            if [ -n "$response" ]; then
+              break
+            fi
+            echo "⏳ Attempt $i failed, waiting 20s..."
+            sleep 20
+          done
+
+          if [ -z "$response" ]; then
+            echo "❌ Could not reach Shellty Pulse — sleeping"
+            echo "should_wake=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Parse business hours from meta
+          bh_enabled=$(echo "$response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(str(data['meta']['business_hours_enabled']).lower())
+          ")
+          bh_start=$(echo "$response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(data['meta']['business_hours_start'])
+          ")
+          bh_end=$(echo "$response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(data['meta']['business_hours_end'])
+          ")
+
+          echo "Business hours enabled : $bh_enabled"
+          echo "Business hours range   : ${bh_start}:00 – ${bh_end}:00 CET"
+
+          echo "bh_enabled=$bh_enabled" >> $GITHUB_OUTPUT
+          echo "bh_start=$bh_start"     >> $GITHUB_OUTPUT
+          echo "bh_end=$bh_end"         >> $GITHUB_OUTPUT
+
+      - name: Check current time (CET)
+        id: time
+        if: steps.config.outputs.bh_enabled == 'true'
+        run: |
+          current_hour=$(TZ='Europe/Warsaw' date +%-H)
+          bh_start=${{ steps.config.outputs.bh_start }}
+          bh_end=${{ steps.config.outputs.bh_end }}
+
+          echo "Current hour (CET) : $current_hour"
+          echo "Business hours     : ${bh_start}:00 – ${bh_end}:00"
+
+          if [ "$current_hour" -ge "$bh_start" ] && [ "$current_hour" -lt "$bh_end" ]; then
+            echo "✅ Within business hours — will wake"
+            echo "in_hours=true" >> $GITHUB_OUTPUT
+          else
+            echo "⏭️ Outside business hours — skip"
+            echo "in_hours=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Wake Shellty Pulse
+        if: |
+          steps.config.outputs.bh_enabled == 'true' &&
+          steps.time.outputs.in_hours == 'true'
+        run: |
+          echo "🔔 Calling /api/wake-and-check ..."
+
+          response=$(curl -sf \
+            --max-time 30 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            "$APP_URL/api/wake-and-check" || echo "failed")
+
+          if [ "$response" = "failed" ]; then
+            echo "❌ wake-and-check call failed"
+            exit 1
+          fi
+
+          echo "✅ Response:"
+          echo "$response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(f'  awake    : {data[\"awake\"]}')
+          print(f'  checking : {data[\"checking\"]}')
+          print(f'  message  : {data[\"message\"]}')
+          "
+
+      - name: Summary
+        if: always()
+        run: |
+          bh_enabled="${{ steps.config.outputs.bh_enabled }}"
+          in_hours="${{ steps.time.outputs.in_hours }}"
+
+          if   [ "$bh_enabled" != "true" ]; then
+            echo "⏭️ Business hours disabled — Shellty Pulse not woken"
+          elif [ "$in_hours" != "true" ]; then
+            echo "⏭️ Outside business hours — Shellty Pulse not woken"
+          else
+            echo "✅ Shellty Pulse woken successfully"
+          fi

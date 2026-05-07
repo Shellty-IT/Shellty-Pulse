@@ -12,7 +12,13 @@ Import pattern (always use module-level access):
 from __future__ import annotations
 
 import threading
-from pulse.config import PING_INTERVAL_DEFAULT
+
+from pulse.config import (
+    PING_INTERVAL_DEFAULT,
+    BUSINESS_HOURS_ENABLED_DEFAULT,
+    BUSINESS_HOURS_START_DEFAULT,
+    BUSINESS_HOURS_END_DEFAULT,
+)
 
 # ── Thread synchronisation ───────────────────────────────────────────────────
 services_lock = threading.Lock()
@@ -25,3 +31,8 @@ services: list[dict] = []
 ping_interval: int = PING_INTERVAL_DEFAULT
 auto_ping_enabled: bool = False
 last_check_time: str | None = None
+
+# ── Business Hours settings ──────────────────────────────────────────────────
+business_hours_enabled: bool = BUSINESS_HOURS_ENABLED_DEFAULT
+business_hours_start: int = BUSINESS_HOURS_START_DEFAULT
+business_hours_end: int = BUSINESS_HOURS_END_DEFAULT

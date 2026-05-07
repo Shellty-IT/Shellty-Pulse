@@ -1,8 +1,10 @@
 """
 Background scheduler lifecycle and graceful shutdown.
 
-Keeps the APScheduler instance and all signal/atexit wiring
-out of the application factory.
+NOTE: On Render.com the APScheduler cannot reliably wake a sleeping app.
+      GitHub Actions is used instead as the external wake mechanism.
+      The scheduler is kept as a local fallback only (auto_ping_enabled=False
+      by default so it does nothing unless explicitly enabled via dashboard).
 """
 from __future__ import annotations
 
@@ -16,7 +18,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from pulse import state
 from pulse.checker import check_all_services, scheduled_check
-from pulse.config import PING_INTERVAL_DEFAULT, PORT, REQUEST_TIMEOUT, MAX_SERVICES, SERVICES_JSON
+from pulse.config import (
+    PING_INTERVAL_DEFAULT,
+    PORT,
+    REQUEST_TIMEOUT,
+    MAX_SERVICES,
+    SERVICES_JSON,
+)
 from pulse.models import create_service
 
 logger = logging.getLogger("shellty-pulse")
@@ -30,9 +38,6 @@ scheduler: BackgroundScheduler | None = None
 def graceful_shutdown(signum=None, frame=None) -> None:
     """
     Stop the background scheduler cleanly on SIGTERM / SIGINT / process exit.
-
-    Registered via ``atexit`` and ``signal.signal`` so it is called
-    regardless of how the process terminates.
     """
     logger.info("Shutting down gracefully...")
     if scheduler and scheduler.running:
@@ -45,9 +50,8 @@ atexit.register(graceful_shutdown)
 
 try:
     signal.signal(signal.SIGTERM, graceful_shutdown)
-    signal.signal(signal.SIGINT,  graceful_shutdown)
+    signal.signal(signal.SIGINT, graceful_shutdown)
 except (ValueError, OSError):
-    # signal.signal() may only be called from the main thread.
     pass
 
 
@@ -56,16 +60,6 @@ except (ValueError, OSError):
 def load_services_from_env() -> None:
     """
     Parse the ``SERVICES`` environment variable and seed the service list.
-
-    Expected format — JSON array::
-
-        [
-          {"name": "App", "url": "https://api.example.com/health"},
-          {"name": "Site", "url": "https://site.example.com/health",
-           "frontend_url": "https://site.example.com"}
-        ]
-
-    Invalid or malformed entries are skipped with a warning.
     """
     try:
         parsed = json.loads(SERVICES_JSON)
@@ -86,10 +80,7 @@ def load_services_from_env() -> None:
             )
             with state.services_lock:
                 state.services.append(svc)
-
             logger.info("  Preloaded: %s → %s", item["name"], item["url"])
-            if item.get("frontend_url"):
-                logger.info("    Frontend: %s", item["frontend_url"])
         else:
             logger.warning("  Skipping invalid entry: %s", item)
 
@@ -102,19 +93,18 @@ def load_services_from_env() -> None:
 
 def start_background_services() -> None:
     """
-    Seed services from env, start the APScheduler, kick off first ping.
+    Seed services from env, start the APScheduler (as local fallback).
 
-    Intentionally **not** called inside ``create_app()`` so that the
-    test suite can instantiate the Flask app without making real HTTP
-    requests or starting background threads.
+    IMPORTANT: auto_ping_enabled defaults to False — the scheduler will
+    run its job on schedule but scheduled_check() will skip execution
+    unless auto_ping_enabled is True.
 
-    Note:
-        gunicorn MUST be started with ``--workers 1`` because the scheduler
-        and in-memory state are process-local.
+    On Render.com, GitHub Actions is the primary wake mechanism.
+    The scheduler here acts only as a local/dev fallback.
     """
     global scheduler
 
-    from pulse.config import VERSION  # avoid top-level circular risk
+    from pulse.config import VERSION
 
     logger.info("=" * 50)
     logger.info("  Starting Shellty Pulse — Service Health Monitor")
@@ -129,22 +119,24 @@ def start_background_services() -> None:
     )
     logger.info("  REQUEST_TIMEOUT: %d seconds", REQUEST_TIMEOUT)
     logger.info("  MAX_SERVICES:    %d", MAX_SERVICES)
+    logger.info("  AUTO_PING:       disabled by default (GitHub Actions mode)")
 
     load_services_from_env()
 
+    # Start scheduler as fallback — but auto_ping_enabled=False means
+    # scheduled_check() will log "disabled — skipping" and do nothing.
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(
         func=scheduled_check,
         trigger="interval",
         seconds=state.ping_interval,
         id="health_check_job",
-        name="Periodic Health Check",
+        name="Periodic Health Check (local fallback)",
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("Scheduler started — checking every %d seconds.", state.ping_interval)
-
-    # First check runs in background so startup is non-blocking
-    threading.Thread(target=check_all_services, daemon=True).start()
-    logger.info("Initial health check started in background.")
+    logger.info(
+        "Scheduler started (local fallback) — auto_ping disabled by default."
+    )
+    logger.info("Primary wake mechanism: GitHub Actions")
     logger.info("=" * 50)

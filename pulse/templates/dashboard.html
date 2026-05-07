@@ -29,7 +29,6 @@
             gap: 0.2rem;
         }
 
-        /* === Logo SVG Animation === */
         .logo-icon {
             width: 160px;
             height: 160px;
@@ -46,7 +45,6 @@
             transform: scale(1.1);
         }
 
-        /* Heartbeat animation — double-beat like real heart */
         @keyframes heartbeat {
             0%   { transform: scale(1); }
             15%  { transform: scale(1.1); }
@@ -56,7 +54,6 @@
             100% { transform: scale(1); }
         }
 
-        /* Pulse line glow animation — synced with heartbeat */
         .logo-icon #pulse-line path {
             animation: pulseGlow 2s ease-in-out infinite;
         }
@@ -80,15 +77,8 @@
             100% { filter: drop-shadow(0 0 8px rgba(37, 239, 255, 0.7)); opacity: 0.9; }
         }
 
-        header h1 {
-            font-size: 2.2rem;
-            color: #f0f6fc;
-            margin: 0;
-        }
-        .brand-accent {
-            color: #58a6ff;
-        }
-
+        header h1 { font-size: 2.2rem; color: #f0f6fc; margin: 0; }
+        .brand-accent { color: #58a6ff; }
         .subtitle { color: #8b949e; font-size: 0.95rem; }
 
         /* === Overall Status Banner === */
@@ -123,26 +113,13 @@
             font-size: 0.8rem;
         }
 
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 0.35rem;
-            color: #8b949e;
-        }
-
-        .legend-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            display: inline-block;
-        }
-
+        .legend-item { display: flex; align-items: center; gap: 0.35rem; color: #8b949e; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
         .legend-dot.operational { background: #3fb950; }
         .legend-dot.degraded    { background: #d29922; }
         .legend-dot.slow        { background: #db6d28; }
         .legend-dot.down        { background: #f85149; }
         .legend-dot.unknown     { background: #484f58; }
-
         .legend-desc { color: #6e7681; }
 
         /* === Control Buttons === */
@@ -166,26 +143,16 @@
             transition: all 0.2s;
         }
 
-        .btn:hover           { background: #30363d; border-color: #58a6ff; }
-        .btn:disabled        { opacity: 0.5; cursor: not-allowed; }
-        .btn.primary         { background: #238636; border-color: #238636; color: #fff; }
-        .btn.primary:hover   { background: #2ea043; }
-        .btn.active          { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-        .btn.inactive        { background: #21262d; border-color: #f85149; color: #f85149; }
+        .btn:hover         { background: #30363d; border-color: #58a6ff; }
+        .btn:disabled      { opacity: 0.5; cursor: not-allowed; }
+        .btn.primary       { background: #238636; border-color: #238636; color: #fff; }
+        .btn.primary:hover { background: #2ea043; }
+        .btn.active        { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+        .btn.inactive      { background: #21262d; border-color: #f85149; color: #f85149; }
 
         /* === Interval Selector === */
-        .interval-selector {
-            display: flex;
-            align-items: center;
-            gap: 0.4rem;
-            flex-wrap: wrap;
-        }
-
-        .interval-label {
-            color: #8b949e;
-            font-size: 0.8rem;
-            margin-right: 0.2rem;
-        }
+        .interval-selector { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+        .interval-label { color: #8b949e; font-size: 0.8rem; margin-right: 0.2rem; }
 
         .interval-btn {
             padding: 0.3rem 0.65rem;
@@ -203,20 +170,10 @@
         .interval-btn:disabled       { opacity: 0.4; cursor: not-allowed; }
         .interval-btn:disabled:hover { border-color: #30363d; color: #8b949e; }
 
-        .check-info {
-            color: #8b949e;
-            font-size: 0.85rem;
-            text-align: center;
-            width: 100%;
-        }
+        .check-info { color: #8b949e; font-size: 0.85rem; text-align: center; width: 100%; }
 
         /* === Service Cards === */
-        .services-grid {
-            display: flex;
-            flex-direction: column;
-            gap: 0.75rem;
-            margin-bottom: 2rem;
-        }
+        .services-grid { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 2rem; }
 
         .service-card {
             display: flex;
@@ -231,66 +188,20 @@
 
         .service-card:hover { border-color: #58a6ff; }
         .status-icon        { font-size: 1.5rem; flex-shrink: 0; }
+        .service-info       { flex: 1; min-width: 0; }
 
-        .service-info { flex: 1; min-width: 0; }
-
-        .service-name {
-            font-weight: 600;
-            color: #f0f6fc;
-            font-size: 1rem;
-            margin-bottom: 0.15rem;
-        }
-
-        .service-name a {
-            color: #f0f6fc;
-            text-decoration: none;
-            transition: color 0.2s;
-        }
-
+        .service-name { font-weight: 600; color: #f0f6fc; font-size: 1rem; margin-bottom: 0.15rem; }
+        .service-name a { color: #f0f6fc; text-decoration: none; transition: color 0.2s; }
         .service-name a:hover { color: #58a6ff; }
-
-        .service-name .link-arrow {
-            font-size: 0.7rem;
-            opacity: 0.4;
-            margin-left: 0.2rem;
-            transition: opacity 0.2s;
-        }
-
+        .service-name .link-arrow { font-size: 0.7rem; opacity: 0.4; margin-left: 0.2rem; transition: opacity 0.2s; }
         .service-name a:hover .link-arrow { opacity: 1; }
 
-        .service-backend {
-            display: flex;
-            align-items: center;
-            gap: 0.3rem;
-            font-size: 0.78rem;
-            margin-top: 0.1rem;
-        }
+        .service-backend { display: flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; margin-top: 0.1rem; }
+        .backend-label   { color: #6e7681; font-weight: 500; flex-shrink: 0; }
+        .backend-link    { color: #58a6ff; text-decoration: none; word-break: break-all; transition: color 0.2s; }
+        .backend-link:hover { color: #79c0ff; text-decoration: underline; }
 
-        .backend-label {
-            color: #6e7681;
-            font-weight: 500;
-            flex-shrink: 0;
-        }
-
-        .backend-link {
-            color: #58a6ff;
-            text-decoration: none;
-            word-break: break-all;
-            transition: color 0.2s;
-        }
-
-        .backend-link:hover {
-            color: #79c0ff;
-            text-decoration: underline;
-        }
-
-        .service-meta {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-            gap: 0.3rem;
-            flex-shrink: 0;
-        }
+        .service-meta    { display: flex; flex-direction: column; align-items: flex-end; gap: 0.3rem; flex-shrink: 0; }
 
         .response-time         { font-size: 0.85rem; font-weight: 600; color: #8b949e; }
         .response-time.fast    { color: #3fb950; }
@@ -298,19 +209,8 @@
         .response-time.slow    { color: #db6d28; }
         .response-time.timeout { color: #f85149; }
 
-        .uptime-bar {
-            width: 80px; height: 6px;
-            background: #21262d;
-            border-radius: 3px;
-            overflow: hidden;
-        }
-
-        .uptime-fill {
-            height: 100%;
-            border-radius: 3px;
-            transition: width 0.3s;
-        }
-
+        .uptime-bar  { width: 80px; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+        .uptime-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
         .uptime-text { font-size: 0.7rem; color: #8b949e; }
 
         .service-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
@@ -329,9 +229,71 @@
 
         .btn-icon:hover        { background: #30363d; border-color: #58a6ff; }
         .btn-icon.delete:hover { border-color: #f85149; color: #f85149; }
+        .btn-icon.spinning     { animation: spin 1s linear infinite; }
 
-        .btn-icon.spinning { animation: spin 1s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        /* === Business Hours Panel === */
+        .business-hours {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+        }
+
+        .business-hours h3 { color: #f0f6fc; margin-bottom: 1rem; font-size: 1rem; }
+
+        .bh-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .bh-time-inputs {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .bh-time-inputs label {
+            color: #8b949e;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .bh-time-inputs input[type="number"] {
+            width: 60px;
+            padding: 0.4rem 0.5rem;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+
+        .bh-time-inputs input[type="number"]:focus {
+            outline: none;
+            border-color: #58a6ff;
+        }
+
+        .bh-separator { color: #484f58; font-size: 0.85rem; }
+        .bh-timezone  { color: #6e7681; font-size: 0.75rem; font-style: italic; }
+
+        .bh-status {
+            font-size: 0.8rem;
+            padding: 0.25rem 0.6rem;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+
+        .bh-status.active   { background: #0d1f0d; color: #3fb950; border: 1px solid #238636; }
+        .bh-status.inactive { background: #161b22; color: #484f58; border: 1px solid #30363d; }
 
         /* === Add Service Form === */
         .add-service {
@@ -358,26 +320,11 @@
         .form-row input:focus        { outline: none; border-color: #58a6ff; }
         .form-row input::placeholder { color: #484f58; }
 
-        .add-note {
-            margin-top: 0.6rem;
-            font-size: 0.75rem;
-            color: #6e7681;
-            font-style: italic;
-        }
+        .add-note { margin-top: 0.6rem; font-size: 0.75rem; color: #6e7681; font-style: italic; }
 
         /* === Footer === */
-        footer {
-            text-align: center;
-            padding-top: 2rem;
-            color: #484f58;
-            font-size: 0.8rem;
-        }
-
-        footer a {
-            color: #58a6ff;
-            text-decoration: none;
-        }
-
+        footer { text-align: center; padding-top: 2rem; color: #484f58; font-size: 0.8rem; }
+        footer a { color: #58a6ff; text-decoration: none; }
         footer a:hover { text-decoration: underline; }
 
         .loading { text-align: center; padding: 2rem; color: #8b949e; }
@@ -391,12 +338,13 @@
             .service-meta { flex-direction: row; align-items: center; width: 100%; }
             .service-actions { width: 100%; justify-content: flex-end; }
             .status-legend { font-size: 0.72rem; gap: 0.5rem 0.75rem; }
+            .bh-row { flex-direction: column; align-items: flex-start; }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Header — Logo above text -->
+
         <header>
             <svg class="logo-icon" viewBox="220 270 580 460" xmlns="http://www.w3.org/2000/svg">
                 <g id="layer1">
@@ -423,10 +371,8 @@
             <p class="subtitle">Service Health Monitor</p>
         </header>
 
-        <!-- Overall Status Banner -->
         <div id="overall-status" class="overall-status unknown">Loading...</div>
 
-        <!-- Status Legend -->
         <div class="status-legend">
             <span class="legend-item"><span class="legend-dot operational"></span> Operational <span class="legend-desc">(&lt; 1s)</span></span>
             <span class="legend-item"><span class="legend-dot degraded"></span> Degraded <span class="legend-desc">(1-3s)</span></span>
@@ -435,7 +381,6 @@
             <span class="legend-item"><span class="legend-dot unknown"></span> Unknown <span class="legend-desc">(not checked)</span></span>
         </div>
 
-        <!-- Control Buttons -->
         <div class="controls">
             <button class="btn primary" onclick="checkAll(this)">⟳ Check All Now</button>
             <button id="auto-ping-btn" class="btn active" onclick="toggleAutoPing()">
@@ -453,18 +398,47 @@
             <div id="check-info" class="check-info">Loading...</div>
         </div>
 
-        <!-- Services List -->
         <div id="services-grid" class="services-grid">
             <div class="loading">Loading services...</div>
         </div>
 
-        <!-- Add Service Form -->
+        <!-- Business Hours Panel -->
+        <div class="business-hours">
+            <h3>🕐 Business Hours — Keep-Alive (via GitHub Actions)</h3>
+            <div class="bh-row">
+                <button id="bh-toggle-btn" class="btn inactive" onclick="toggleBusinessHours()">
+                    Business Hours: OFF
+                </button>
+                <div class="bh-time-inputs">
+                    <label>
+                        From:
+                        <input type="number" id="bh-start" min="0" max="23" value="9" />
+                        :00
+                    </label>
+                    <span class="bh-separator">—</span>
+                    <label>
+                        To:
+                        <input type="number" id="bh-end" min="0" max="23" value="15" />
+                        :00
+                    </label>
+                    <span class="bh-timezone">CET (Europe/Warsaw)</span>
+                </div>
+                <button class="btn primary" onclick="saveBusinessHours()">💾 Save</button>
+                <span id="bh-status" class="bh-status inactive">Inactive</span>
+            </div>
+            <p class="add-note" style="margin-top:0.75rem;">
+                ℹ️ When enabled, GitHub Actions wakes Shellty Pulse every 10 minutes between the set hours (CET).
+                Shellty Pulse will then check services according to Auto-Ping settings above.
+                Outside these hours, Shellty Pulse sleeps normally.
+            </p>
+        </div>
+
         <div class="add-service">
             <h3>➕ Add New Service</h3>
             <div class="form-row">
-                <input type="text" id="new-name"         placeholder="Service name"                        maxlength="100"  />
-                <input type="text" id="new-url"          placeholder="Health check URL (https://...)"      maxlength="2048" />
-                <input type="text" id="new-frontend-url" placeholder="Frontend URL — optional"             maxlength="2048" />
+                <input type="text" id="new-name"         placeholder="Service name"                    maxlength="100"  />
+                <input type="text" id="new-url"          placeholder="Health check URL (https://...)"  maxlength="2048" />
+                <input type="text" id="new-frontend-url" placeholder="Frontend URL — optional"         maxlength="2048" />
                 <button class="btn primary" onclick="addService()">Add</button>
             </div>
             <p class="add-note">⚠ Services added here are stored in memory and will be reset on application restart.</p>
@@ -477,9 +451,6 @@
     </div>
 
     <script>
-        /* ========================================
-         * Constants & Status Helpers
-         * ======================================== */
         var REFRESH_INTERVAL = 30000;
 
         var STATUS_CONFIG = {
@@ -533,9 +504,8 @@
             return Math.round(seconds / 60) + ' min';
         }
 
-        /* ========================================
-         * API Communication (fetch, no reload)
-         * ======================================== */
+        /* ── API calls ── */
+
         async function fetchServices() {
             try {
                 var res  = await fetch('/api/services');
@@ -638,14 +608,70 @@
             }
         }
 
-        /* ========================================
-         * Render Dashboard (DOM update)
-         * ======================================== */
+        /* ── Business Hours ── */
+
+        async function toggleBusinessHours() {
+            var btn     = document.getElementById('bh-toggle-btn');
+            var enabled = btn.classList.contains('inactive');
+            var start   = parseInt(document.getElementById('bh-start').value);
+            var end     = parseInt(document.getElementById('bh-end').value);
+
+            try {
+                var res = await fetch('/api/business-hours', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ enabled: enabled, start: start, end: end })
+                });
+                if (res.ok) {
+                    await fetchServices();
+                } else {
+                    var errData = await res.json();
+                    alert(errData.error || 'Failed to toggle business hours.');
+                }
+            } catch (err) {
+                console.error('Business hours toggle failed:', err);
+            }
+        }
+
+        async function saveBusinessHours() {
+            var start   = parseInt(document.getElementById('bh-start').value);
+            var end     = parseInt(document.getElementById('bh-end').value);
+            var btn     = document.getElementById('bh-toggle-btn');
+            var enabled = btn.classList.contains('active');
+
+            if (isNaN(start) || isNaN(end)) {
+                alert('Please enter valid hours (0-23).');
+                return;
+            }
+            if (start >= end) {
+                alert('"From" hour must be less than "To" hour.');
+                return;
+            }
+
+            try {
+                var res = await fetch('/api/business-hours', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ enabled: enabled, start: start, end: end })
+                });
+                if (res.ok) {
+                    await fetchServices();
+                } else {
+                    var errData = await res.json();
+                    alert(errData.error || 'Failed to save business hours.');
+                }
+            } catch (err) {
+                console.error('Save business hours failed:', err);
+            }
+        }
+
+        /* ── Render ── */
+
         function renderDashboard(data) {
             var services = data.services;
             var meta     = data.meta;
 
-            /* Overall status banner */
+            /* Overall status */
             var oel  = document.getElementById('overall-status');
             var ocfg = getStatusConfig(meta.overall_status);
             oel.className   = 'overall-status ' + meta.overall_status;
@@ -661,85 +687,101 @@
                 apb.textContent = '⏱ Auto-Ping: OFF';
             }
 
-            /* Interval buttons — highlight active, disable when auto-ping off */
-            var intervalBtns = document.querySelectorAll('.interval-btn');
-            intervalBtns.forEach(function(btn) {
-                var btnInterval = parseInt(btn.getAttribute('data-interval'));
-                btn.classList.toggle('active', btnInterval === meta.ping_interval);
+            /* Interval buttons */
+            document.querySelectorAll('.interval-btn').forEach(function(btn) {
+                var val = parseInt(btn.getAttribute('data-interval'));
+                btn.classList.toggle('active', val === meta.ping_interval);
                 btn.disabled = !meta.auto_ping_enabled;
             });
 
-            /* Check info line */
+            /* Check info */
             var ci       = document.getElementById('check-info');
             var intLabel = intervalLabel(meta.ping_interval);
 
             if (meta.last_check) {
-                var ago      = timeAgo(meta.last_check);
+                var ago = timeAgo(meta.last_check);
                 if (meta.auto_ping_enabled) {
-                    var elapsed    = (Date.now() - new Date(meta.last_check).getTime()) / 1000;
-                    var remainSec  = Math.max(0, meta.ping_interval - elapsed);
+                    var elapsed   = (Date.now() - new Date(meta.last_check).getTime()) / 1000;
+                    var remainSec = Math.max(0, meta.ping_interval - elapsed);
                     var remainText;
                     if (remainSec >= 86400)     { remainText = Math.round(remainSec / 86400) + 'd'; }
                     else if (remainSec >= 3600) { remainText = Math.round(remainSec / 3600)  + 'h'; }
                     else                        { remainText = Math.round(remainSec / 60)    + ' min'; }
-                    ci.textContent = 'Last check: ' + ago + ' · Next in: ~' + remainText + ' · Auto-ping every ' + intLabel;
+                    ci.textContent = 'Last check: ' + ago + ' · Next in: ~' + remainText + ' · Interval: ' + intLabel;
                 } else {
                     ci.textContent = 'Last check: ' + ago + ' · Auto-ping disabled';
                 }
             } else {
-                ci.textContent = 'No checks yet · Auto-ping every ' + intLabel;
+                ci.textContent = 'No checks yet · Interval: ' + intLabel;
             }
 
             /* Services grid */
             var grid = document.getElementById('services-grid');
             if (services.length === 0) {
                 grid.innerHTML = '<div class="loading">No services configured. Add one below.</div>';
-                return;
+            } else {
+                grid.innerHTML = services.map(function(svc) {
+                    var cfg     = getStatusConfig(svc.status);
+                    var upPct   = svc.uptime_percent !== null ? svc.uptime_percent.toFixed(1) : '—';
+                    var upColor = svc.uptime_percent !== null ? uptimeColor(svc.uptime_percent) : '#484f58';
+                    var upWidth = svc.uptime_percent !== null ? svc.uptime_percent : 0;
+
+                    var nameHtml;
+                    if (svc.frontend_url) {
+                        nameHtml = '<a href="' + escapeHtml(svc.frontend_url) + '" target="_blank" rel="noopener noreferrer">' +
+                                   escapeHtml(svc.name) +
+                                   ' <span class="link-arrow">↗</span></a>';
+                    } else {
+                        nameHtml = escapeHtml(svc.name);
+                    }
+
+                    var backendHtml = '<span class="backend-label">Backend:</span> ' +
+                        '<a href="' + escapeHtml(svc.url) + '" target="_blank" rel="noopener noreferrer" class="backend-link">' +
+                        escapeHtml(svc.url) + '</a>';
+
+                    return '<div class="service-card">'
+                        + '<div class="status-icon">' + cfg.icon + '</div>'
+                        + '<div class="service-info">'
+                        +   '<div class="service-name">'    + nameHtml    + '</div>'
+                        +   '<div class="service-backend">' + backendHtml + '</div>'
+                        + '</div>'
+                        + '<div class="service-meta">'
+                        +   '<div class="response-time ' + rtClass(svc.response_time_ms) + '">' + rtText(svc.response_time_ms) + '</div>'
+                        +   '<div class="uptime-bar"><div class="uptime-fill" style="width:' + upWidth + '%;background:' + upColor + '"></div></div>'
+                        +   '<div class="uptime-text">Uptime: ' + upPct + '%</div>'
+                        + '</div>'
+                        + '<div class="service-actions">'
+                        +   '<button id="check-btn-' + svc.id + '" class="btn-icon" onclick="checkService(\'' + svc.id + '\')" title="Check now">⟳</button>'
+                        +   '<button class="btn-icon delete" onclick="deleteService(\'' + svc.id + '\')" title="Delete">✕</button>'
+                        + '</div>'
+                        + '</div>';
+                }).join('');
             }
 
-            grid.innerHTML = services.map(function(svc) {
-                var cfg     = getStatusConfig(svc.status);
-                var upPct   = svc.uptime_percent !== null ? svc.uptime_percent.toFixed(1) : '—';
-                var upColor = svc.uptime_percent !== null ? uptimeColor(svc.uptime_percent) : '#484f58';
-                var upWidth = svc.uptime_percent !== null ? svc.uptime_percent : 0;
+            /* Business Hours panel */
+            var bhEnabled = meta.business_hours_enabled;
+            var bhStart   = meta.business_hours_start;
+            var bhEnd     = meta.business_hours_end;
+            var bhBtn     = document.getElementById('bh-toggle-btn');
+            var bhStatus  = document.getElementById('bh-status');
 
-                /* Service name — linked to frontend if frontend_url exists */
-                var nameHtml;
-                if (svc.frontend_url) {
-                    nameHtml = '<a href="' + escapeHtml(svc.frontend_url) + '" target="_blank" rel="noopener noreferrer">' +
-                               escapeHtml(svc.name) +
-                               ' <span class="link-arrow">↗</span></a>';
-                } else {
-                    nameHtml = escapeHtml(svc.name);
-                }
+            document.getElementById('bh-start').value = bhStart;
+            document.getElementById('bh-end').value   = bhEnd;
 
-                /* Backend health URL — always shown as clickable link */
-                var backendHtml = '<span class="backend-label">Backend:</span> ' +
-                    '<a href="' + escapeHtml(svc.url) + '" target="_blank" rel="noopener noreferrer" class="backend-link">' +
-                    escapeHtml(svc.url) + '</a>';
-
-                return '<div class="service-card">'                                                                +
-                    '<div class="status-icon">' + cfg.icon + '</div>'                                              +
-                    '<div class="service-info">'                                                                   +
-                        '<div class="service-name">'    + nameHtml    + '</div>'                                   +
-                        '<div class="service-backend">' + backendHtml + '</div>'                                   +
-                    '</div>'                                                                                       +
-                    '<div class="service-meta">'                                                                   +
-                        '<div class="response-time ' + rtClass(svc.response_time_ms) + '">' + rtText(svc.response_time_ms) + '</div>' +
-                        '<div class="uptime-bar"><div class="uptime-fill" style="width:' + upWidth + '%;background:' + upColor + '"></div></div>' +
-                        '<div class="uptime-text">Uptime: ' + upPct + '%</div>'                                    +
-                    '</div>'                                                                                       +
-                    '<div class="service-actions">'                                                                +
-                        '<button id="check-btn-' + svc.id + '" class="btn-icon" onclick="checkService(\'' + svc.id + '\')" title="Check now">⟳</button>' +
-                        '<button class="btn-icon delete" onclick="deleteService(\'' + svc.id + '\')" title="Delete">✕</button>' +
-                    '</div>'                                                                                       +
-                '</div>';
-            }).join('');
+            if (bhEnabled) {
+                bhBtn.className   = 'btn active';
+                bhBtn.textContent = 'Business Hours: ON';
+                bhStatus.className   = 'bh-status active';
+                bhStatus.textContent = '✅ Active ' + bhStart + ':00–' + bhEnd + ':00 CET';
+            } else {
+                bhBtn.className   = 'btn inactive';
+                bhBtn.textContent = 'Business Hours: OFF';
+                bhStatus.className   = 'bh-status inactive';
+                bhStatus.textContent = 'Inactive';
+            }
         }
 
-        /* ========================================
-         * Initialization — fetch + auto-refresh
-         * ======================================== */
+        /* ── Init ── */
         fetchServices();
         setInterval(fetchServices, REFRESH_INTERVAL);
     </script>
