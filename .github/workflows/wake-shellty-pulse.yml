@@ -1,14 +1,4 @@
-# .github/workflows/wake-shellty-pulse.yml
-# =============================================
-# Runs every 10 minutes.
-# Checks if business hours are enabled and current
-# time is within the configured range (CET).
-# If yes — wakes Shellty Pulse via /api/wake-and-check.
-# Shellty Pulse then decides whether to ping services
-# based on auto_ping_enabled and ping_interval.
-# =============================================
-
-name: Wake Shellty Pulse
+name: Wake Shellty Pulse (Business Hours)
 
 on:
   schedule:
@@ -28,109 +18,151 @@ jobs:
       APP_URL: https://shellty-pulse.onrender.com
 
     steps:
-
-      - name: Fetch business hours config
-        id: config
+      - name: Check business hours config
+        id: check-time
         run: |
-          echo "📡 Fetching Shellty Pulse config..."
+          BH_ENABLED="${{ vars.BH_ENABLED }}"
+          BH_START="${{ vars.BH_START }}"
+          BH_END="${{ vars.BH_END }}"
 
-          # Try to reach the app — it may be sleeping (cold start up to 50s on Render)
-          response=""
-          for i in 1 2 3; do
-            response=$(curl -sf --max-time 60 "$APP_URL/api/services" || echo "")
-            if [ -n "$response" ]; then
-              break
-            fi
-            echo "⏳ Attempt $i failed, waiting 20s..."
-            sleep 20
-          done
+          echo "BH_ENABLED : $BH_ENABLED"
+          echo "BH_START   : $BH_START"
+          echo "BH_END     : $BH_END"
 
-          if [ -z "$response" ]; then
-            echo "❌ Could not reach Shellty Pulse — sleeping"
+          if [ -z "$BH_ENABLED" ] || [ -z "$BH_START" ] || [ -z "$BH_END" ]; then
+            echo "⚠️ Business hours not configured — skip"
             echo "should_wake=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # Parse business hours from meta
-          bh_enabled=$(echo "$response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          print(str(data['meta']['business_hours_enabled']).lower())
-          ")
-          bh_start=$(echo "$response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          print(data['meta']['business_hours_start'])
-          ")
-          bh_end=$(echo "$response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          print(data['meta']['business_hours_end'])
-          ")
-
-          echo "Business hours enabled : $bh_enabled"
-          echo "Business hours range   : ${bh_start}:00 – ${bh_end}:00 CET"
-
-          echo "bh_enabled=$bh_enabled" >> $GITHUB_OUTPUT
-          echo "bh_start=$bh_start"     >> $GITHUB_OUTPUT
-          echo "bh_end=$bh_end"         >> $GITHUB_OUTPUT
-
-      - name: Check current time (CET)
-        id: time
-        if: steps.config.outputs.bh_enabled == 'true'
-        run: |
-          current_hour=$(TZ='Europe/Warsaw' date +%-H)
-          bh_start=${{ steps.config.outputs.bh_start }}
-          bh_end=${{ steps.config.outputs.bh_end }}
-
-          echo "Current hour (CET) : $current_hour"
-          echo "Business hours     : ${bh_start}:00 – ${bh_end}:00"
-
-          if [ "$current_hour" -ge "$bh_start" ] && [ "$current_hour" -lt "$bh_end" ]; then
-            echo "✅ Within business hours — will wake"
-            echo "in_hours=true" >> $GITHUB_OUTPUT
-          else
-            echo "⏭️ Outside business hours — skip"
-            echo "in_hours=false" >> $GITHUB_OUTPUT
+          if [ "$BH_ENABLED" != "true" ]; then
+            echo "⏭️ Business hours disabled — skip"
+            echo "should_wake=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
-      - name: Wake Shellty Pulse
-        if: |
-          steps.config.outputs.bh_enabled == 'true' &&
-          steps.time.outputs.in_hours == 'true'
+          current_hour=$(TZ='Europe/Warsaw' date +%-H)
+          echo "Current hour (CET): $current_hour"
+          echo "Business hours    : ${BH_START}:00 – ${BH_END}:00 CET"
+
+          if [ "$current_hour" -ge "$BH_START" ] && \
+             [ "$current_hour" -lt "$BH_END" ]; then
+            echo "✅ Within business hours — will wake"
+            echo "should_wake=true" >> $GITHUB_OUTPUT
+          else
+            echo "⏭️ Outside business hours — skip (saving Render hours)"
+            echo "should_wake=false" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Step 1: Wake the app (cold start) ──────────────────────────────────
+      - name: Wait for Shellty Pulse to wake
+        if: steps.check-time.outputs.should_wake == 'true'
         run: |
-          echo "🔔 Calling /api/wake-and-check ..."
+          echo "⏳ Waiting for Shellty Pulse to wake up..."
+
+          MAX_ATTEMPTS=8
+          ATTEMPT=0
+          SUCCESS=false
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "  Attempt $ATTEMPT/$MAX_ATTEMPTS — GET /api/services"
+
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 30 \
+              "$APP_URL/api/services" || echo "000")
+
+            echo "  HTTP status: $HTTP_STATUS"
+
+            if [ "$HTTP_STATUS" = "200" ]; then
+              SUCCESS=true
+              echo "✅ App is awake after attempt $ATTEMPT"
+              break
+            fi
+
+            if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+              echo "  Sleeping 15s before retry..."
+              sleep 15
+            fi
+          done
+
+          if [ "$SUCCESS" != "true" ]; then
+            echo "❌ App did not wake after $MAX_ATTEMPTS attempts"
+            exit 1
+          fi
+
+      # ── Step 2: Fire all services (Phase 1) ─────────────────────────────────
+      - name: 🔥 Fire all services (kick cold starts)
+        if: steps.check-time.outputs.should_wake == 'true'
+        run: |
+          echo "🔥 Phase 1 — Firing all services..."
 
           response=$(curl -sf \
             --max-time 30 \
             -X POST \
             -H "Content-Type: application/json" \
-            "$APP_URL/api/wake-and-check" || echo "failed")
+            "$APP_URL/api/fire-all" || echo "CURL_FAILED")
 
-          if [ "$response" = "failed" ]; then
-            echo "❌ wake-and-check call failed"
+          if [ "$response" = "CURL_FAILED" ]; then
+            echo "❌ POST /api/fire-all failed"
             exit 1
           fi
 
-          echo "✅ Response:"
+          echo "✅ Fire response:"
           echo "$response" | python3 -c "
           import sys, json
-          data = json.load(sys.stdin)
-          print(f'  awake    : {data[\"awake\"]}')
-          print(f'  checking : {data[\"checking\"]}')
-          print(f'  message  : {data[\"message\"]}')
-          "
+          try:
+              data = json.load(sys.stdin)
+              print(f'  status         : {data.get(\"status\")}')
+              print(f'  services_count : {data.get(\"services_count\")}')
+              print(f'  message        : {data.get(\"message\")}')
+          except Exception as e:
+              print(f'  (raw) {sys.stdin.read()}')
+          " || echo "$response"
+
+      # ── Step 3: Wait for cold starts (Phase 2) ──────────────────────────────
+      - name: ⏳ Wait for Render cold starts
+        if: steps.check-time.outputs.should_wake == 'true'
+        run: |
+          echo "⏳ Phase 2 — Waiting 120 seconds for cold starts..."
+          sleep 120
+          echo "✅ Cold start window complete"
+
+      # ── Step 4: Verify all services (Phase 3) ───────────────────────────────
+      - name: ✔️ Verify all services
+        if: steps.check-time.outputs.should_wake == 'true'
+        run: |
+          echo "✔️ Phase 3 — Verifying all services..."
+
+          response=$(curl -sf \
+            --max-time 30 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            "$APP_URL/api/verify-all" || echo "CURL_FAILED")
+
+          if [ "$response" = "CURL_FAILED" ]; then
+            echo "❌ POST /api/verify-all failed"
+            exit 1
+          fi
+
+          echo "✅ Verify response:"
+          echo "$response" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              print(f'  status         : {data.get(\"status\")}')
+              print(f'  services_count : {data.get(\"services_count\")}')
+              print(f'  message        : {data.get(\"message\")}')
+          except Exception as e:
+              print(f'  (raw) {sys.stdin.read()}')
+          " || echo "$response"
 
       - name: Summary
         if: always()
         run: |
-          bh_enabled="${{ steps.config.outputs.bh_enabled }}"
-          in_hours="${{ steps.time.outputs.in_hours }}"
-
-          if   [ "$bh_enabled" != "true" ]; then
-            echo "⏭️ Business hours disabled — Shellty Pulse not woken"
-          elif [ "$in_hours" != "true" ]; then
-            echo "⏭️ Outside business hours — Shellty Pulse not woken"
+          should="${{ steps.check-time.outputs.should_wake }}"
+          if [ "$should" = "true" ]; then
+            echo "✅ Shellty Pulse: fire → 120s wait → verify complete"
           else
-            echo "✅ Shellty Pulse woken successfully"
+            echo "⏭️ Skipped — outside business hours (Render hours saved)"
           fi

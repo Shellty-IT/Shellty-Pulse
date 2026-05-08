@@ -1,22 +1,34 @@
 """
 REST API blueprint — all /api/* endpoints.
+
+New endpoints for split fire-verify strategy:
+  POST /api/fire-all   — Phase 1: Kick cold starts
+  POST /api/verify-all — Phase 3: Verify services (call after 120s)
 """
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 
 from pulse import state
-from pulse.checker import check_all_services, check_single_service
+from pulse.checker import (
+    check_single_service,
+    is_check_running,
+    set_check_running,
+    fire_all,
+    verify_all,
+    _check_lock,
+)
 from pulse.config import (
     AVAILABLE_INTERVALS,
+    BUSINESS_HOURS_TIMEZONE,
     MAX_NAME_LENGTH,
     MAX_SERVICES,
     MAX_URL_LENGTH,
-    BUSINESS_HOURS_TIMEZONE,
 )
 from pulse.models import create_service, get_overall_status
 from pulse.validators import validate_service_payload
@@ -24,36 +36,36 @@ from pulse.validators import validate_service_payload
 logger = logging.getLogger("shellty-pulse")
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
+_WAKE_SECRET = os.environ.get("WAKE_SECRET", "")
+
 
 # ── GET /api/services ────────────────────────────────────────────────────────
 
 @api_bp.get("/services")
 def get_services():
-    """
-    List all monitored services with their current status.
-    Includes business hours settings in meta.
-    """
+    """List all monitored services with current status and meta."""
     with state.services_lock:
-        services_data           = [svc.copy() for svc in state.services]
-        current_interval        = state.ping_interval
-        current_auto_ping       = state.auto_ping_enabled
-        current_last_check      = state.last_check_time
-        bh_enabled              = state.business_hours_enabled
-        bh_start                = state.business_hours_start
-        bh_end                  = state.business_hours_end
+        services_data      = [svc.copy() for svc in state.services]
+        current_interval   = state.ping_interval
+        current_auto_ping  = state.auto_ping_enabled
+        current_last_check = state.last_check_time
+        bh_enabled         = state.business_hours_enabled
+        bh_start           = state.business_hours_start
+        bh_end             = state.business_hours_end
 
     return jsonify({
         "services": services_data,
         "meta": {
-            "overall_status":           get_overall_status(),
-            "auto_ping_enabled":        current_auto_ping,
-            "ping_interval":            current_interval,
-            "last_check":               current_last_check,
-            "total_services":           len(services_data),
-            "business_hours_enabled":   bh_enabled,
-            "business_hours_start":     bh_start,
-            "business_hours_end":       bh_end,
-            "business_hours_timezone":  BUSINESS_HOURS_TIMEZONE,
+            "overall_status":          get_overall_status(),
+            "auto_ping_enabled":       current_auto_ping,
+            "ping_interval":           current_interval,
+            "last_check":              current_last_check,
+            "total_services":          len(services_data),
+            "check_running":           is_check_running(),
+            "business_hours_enabled":  bh_enabled,
+            "business_hours_start":    bh_start,
+            "business_hours_end":      bh_end,
+            "business_hours_timezone": BUSINESS_HOURS_TIMEZONE,
         },
     })
 
@@ -100,7 +112,8 @@ def delete_service_route(service_id: str):
             if svc["id"] == service_id:
                 removed = state.services.pop(i)
                 logger.info(
-                    "Deleted service: %s (id: %s)", removed["name"], service_id
+                    "Deleted service: %s (id: %s)",
+                    removed["name"], service_id,
                 )
                 return "", 204
 
@@ -128,21 +141,119 @@ def check_service_route(service_id: str):
         return jsonify(target.copy())
 
 
-# ── POST /api/check-all ──────────────────────────────────────────────────────
+# ── POST /api/fire-all ───────────────────────────────────────────────────────
+
+@api_bp.post("/fire-all")
+def fire_all_route():
+    """
+    Phase 1: Fire all services (kick cold starts).
+    Returns immediately — use /api/verify-all after 120s.
+    """
+    with state.services_lock:
+        snapshot = [svc.copy() for svc in state.services]
+
+    logger.info("🔥 Firing all %d services to wake cold starts...", len(snapshot))
+
+    def _fire_in_background():
+        fire_all(snapshot)
+        logger.info("🔥 Fire complete — wait 120s then call /api/verify-all")
+
+    threading.Thread(
+        target=_fire_in_background,
+        daemon=True,
+        name="fire-thread"
+    ).start()
+
+    return jsonify({
+        "status":         "fired",
+        "services_count": len(snapshot),
+        "message":        "Cold starts initiated. Call /api/verify-all in 120 seconds.",
+    }), 202
+
+
+# ── POST /api/verify-all ─────────────────────────────────────────────────────
+
+@api_bp.post("/verify-all")
+def verify_all_route():
+    """
+    Phase 3: Verify all services (after cold starts).
+    Call this 120s after /api/fire-all.
+    """
+    if is_check_running():
+        return jsonify({
+            "message":       "Check already running.",
+            "check_running": True,
+        }), 409
+
+    with state.services_lock:
+        snapshot = [svc.copy() for svc in state.services]
+
+    logger.info("✔️ Verifying all %d services...", len(snapshot))
+
+    def _verify_in_background():
+        if not _check_lock.acquire(blocking=False):
+            logger.warning("verify-all: lock already held")
+            return
+
+        try:
+            set_check_running(True)
+            verify_all(snapshot)
+            with state.services_lock:
+                state.last_check_time = datetime.now(timezone.utc).isoformat()
+            logger.info("✔️ Verification complete.")
+        finally:
+            set_check_running(False)
+            _check_lock.release()
+
+    threading.Thread(
+        target=_verify_in_background,
+        daemon=True,
+        name="verify-thread"
+    ).start()
+
+    return jsonify({
+        "status":         "verifying",
+        "services_count": len(snapshot),
+        "message":        "Verification started in background.",
+    }), 202
+
+
+# ── POST /api/check-all (DEPRECATED) ─────────────────────────────────────────
 
 @api_bp.post("/check-all")
 def check_all_route():
-    """Manually trigger health checks for all services."""
-    check_all_services()
+    """
+    DEPRECATED: Use /api/fire-all + wait 120s + /api/verify-all instead.
+
+    This endpoint still works for backwards compatibility but may cause
+    Gunicorn worker timeouts on Render.
+    """
+    from pulse.checker import check_all_services
+
+    if is_check_running():
+        logger.info("check-all: already running — returning 409")
+        return jsonify({
+            "message":       "Check already in progress. Wait for it to finish.",
+            "check_running": True,
+        }), 409
+
+    threading.Thread(
+        target=check_all_services,
+        daemon=True,
+        name="manual-check-all-thread"
+    ).start()
+
+    logger.warning("check-all endpoint called — DEPRECATED, use fire-all + verify-all")
 
     with state.services_lock:
         services_data = [svc.copy() for svc in state.services]
 
     return jsonify({
-        "message":        "All services checked.",
+        "message":        "Health checks started in background (DEPRECATED).",
         "services":       services_data,
         "overall_status": get_overall_status(),
-    })
+        "check_running":  True,
+    }), 202
 
 
 # ── POST /api/wake-and-check ─────────────────────────────────────────────────
@@ -150,23 +261,21 @@ def check_all_route():
 @api_bp.post("/wake-and-check")
 def wake_and_check_route():
     """
-    Called by GitHub Actions to wake Shellty Pulse.
-
-    Returns 200 OK immediately (app is awake).
-    Then checks in background:
-      - auto_ping_enabled must be True
-      - enough time must have passed since last_check (>= ping_interval)
-    If both conditions met → runs check_all_services() in background thread.
+    DEPRECATED: Called by old GitHub Actions workflow.
+    Use /api/fire-all + /api/verify-all instead.
     """
-    # Read state under lock
+    if _WAKE_SECRET:
+        incoming = request.headers.get("X-Wake-Secret", "")
+        if incoming != _WAKE_SECRET:
+            logger.warning("wake-and-check: invalid or missing X-Wake-Secret")
+            return jsonify({"error": "Unauthorized"}), 401
+
     with state.services_lock:
-        auto_ping       = state.auto_ping_enabled
-        ping_interval   = state.ping_interval
-        last_check      = state.last_check_time
+        auto_ping     = state.auto_ping_enabled
+        ping_interval = state.ping_interval
+        last_check    = state.last_check_time
 
-    now = datetime.now(timezone.utc)
-
-    # Determine if we should trigger a check
+    now          = datetime.now(timezone.utc)
     should_check = False
     skip_reason  = ""
 
@@ -174,12 +283,11 @@ def wake_and_check_route():
         skip_reason = "auto_ping disabled"
     else:
         if last_check is None:
-            # Never checked before — check now
             should_check = True
         else:
             try:
-                last_dt  = datetime.fromisoformat(last_check)
-                elapsed  = (now - last_dt).total_seconds()
+                last_dt = datetime.fromisoformat(last_check)
+                elapsed = (now - last_dt).total_seconds()
                 if elapsed >= ping_interval:
                     should_check = True
                 else:
@@ -190,36 +298,48 @@ def wake_and_check_route():
                         f"next check in ~{remaining}s"
                     )
             except (ValueError, TypeError):
-                # Malformed last_check — check now to be safe
                 should_check = True
 
     if should_check:
-        logger.info(
-            "wake-and-check: conditions met — starting background check"
-        )
+        from pulse.checker import check_all_services
+
+        if is_check_running():
+            logger.info("wake-and-check: check already running — skipping spawn")
+            return jsonify({
+                "status":        "ok",
+                "awake":         True,
+                "checking":      True,
+                "triggered_by":  "github-actions",
+                "message":       "Skipped: check already running in background.",
+                "auto_ping":     auto_ping,
+                "ping_interval": ping_interval,
+            }), 200
+
+        logger.warning("wake-and-check: DEPRECATED — use fire-all + verify-all")
         threading.Thread(
             target=check_all_services,
             daemon=True,
-            name="wake-and-check-thread",
+            name="wake-and-check-thread"
         ).start()
 
         return jsonify({
-            "status":       "ok",
-            "awake":        True,
-            "checking":     True,
-            "message":      "Service checks started in background.",
-            "auto_ping":    auto_ping,
+            "status":        "ok",
+            "awake":         True,
+            "checking":      True,
+            "triggered_by":  "github-actions",
+            "message":       "Service checks started in background (DEPRECATED).",
+            "auto_ping":     auto_ping,
             "ping_interval": ping_interval,
         }), 200
-
     else:
-        logger.info("wake-and-check: skipping check — %s", skip_reason)
+        logger.info("wake-and-check: skipping — %s", skip_reason)
         return jsonify({
-            "status":       "ok",
-            "awake":        True,
-            "checking":     False,
-            "message":      f"Skipped: {skip_reason}",
-            "auto_ping":    auto_ping,
+            "status":        "ok",
+            "awake":         True,
+            "checking":      False,
+            "triggered_by":  "github-actions",
+            "message":       f"Skipped: {skip_reason}",
+            "auto_ping":     auto_ping,
             "ping_interval": ping_interval,
         }), 200
 
@@ -246,10 +366,7 @@ def toggle_auto_ping_route():
 
 @api_bp.post("/ping-interval")
 def set_ping_interval_route():
-    """
-    Change the auto-ping interval and reschedule the background job.
-    Valid values: 600, 900, 1800, 3600, 86400, 172800.
-    """
+    """Change the auto-ping interval and reschedule the background job."""
     from pulse.scheduler import scheduler
 
     data = request.get_json(silent=True)
@@ -260,7 +377,7 @@ def set_ping_interval_route():
     if new_interval not in AVAILABLE_INTERVALS:
         valid = [f"{v} ({k}s)" for k, v in AVAILABLE_INTERVALS.items()]
         return jsonify(
-            {"error": f"Invalid interval. Valid options: {', '.join(valid)}"}
+            {"error": f"Invalid interval. Valid: {', '.join(valid)}"}
         ), 400
 
     with state.services_lock:
@@ -287,35 +404,24 @@ def set_ping_interval_route():
 
 @api_bp.post("/business-hours")
 def set_business_hours_route():
-    """
-    Configure business hours settings.
+    """Configure business hours settings and sync to GitHub Variables."""
+    from pulse.github_sync import sync_business_hours_to_github
 
-    Request body (JSON)::
-
-        {
-            "enabled": true,
-            "start":   9,
-            "end":     15
-        }
-
-    Hours are in CET (Europe/Warsaw) timezone.
-    GitHub Actions will only wake Shellty Pulse within these hours.
-    """
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "Request body must be valid JSON."}), 400
 
-    # Validate enabled flag
     enabled = data.get("enabled")
     if not isinstance(enabled, bool):
         return jsonify({"error": "'enabled' must be a boolean."}), 400
 
-    # Validate start/end hours
     start = data.get("start")
     end   = data.get("end")
 
     if not isinstance(start, int) or not isinstance(end, int):
-        return jsonify({"error": "'start' and 'end' must be integers."}), 400
+        return jsonify(
+            {"error": "'start' and 'end' must be integers."}
+        ), 400
 
     if not (0 <= start <= 23) or not (0 <= end <= 23):
         return jsonify(
@@ -332,11 +438,22 @@ def set_business_hours_route():
         state.business_hours_start   = start
         state.business_hours_end     = end
 
-    label = f"{start:02d}:00 – {end:02d}:00 CET"
+    def _sync():
+        ok = sync_business_hours_to_github(enabled, start, end)
+        if ok:
+            logger.info("GitHub Variables synced successfully.")
+        else:
+            logger.warning("GitHub Variables sync failed.")
+
+    threading.Thread(target=_sync, daemon=True, name="github-sync").start()
+
+    label        = f"{start:02d}:00 – {end:02d}:00 CET"
     status_label = "enabled" if enabled else "disabled"
 
     logger.info(
-        "Business hours %s: %s", status_label, label if enabled else "—"
+        "Business hours %s: %s",
+        status_label,
+        label if enabled else "—",
     )
 
     return jsonify({
