@@ -42,13 +42,13 @@ function _applyRunningState(running) {
     var banner = document.getElementById('check-banner');
 
     if (running) {
-        btn.disabled    = true;
+        btn.disabled = true;
         btn.textContent = '⟳ Checking…';
         banner.classList.add('visible');
         _startCountdown();
         _setPolling(POLL_ACTIVE);
     } else {
-        btn.disabled    = false;
+        btn.disabled = false;
         btn.textContent = '⟳ Check All Now';
         banner.classList.remove('visible');
         _stopCountdown();
@@ -93,7 +93,6 @@ async function fetchServices() {
         var res  = await fetch('/api/services');
         var data = await res.json();
 
-        // Jeśli pierwszy load i lista pusta → retry z opóźnieniem
         if (_initialLoadAttempts < _maxInitialRetries &&
             data.services.length === 0 &&
             data.meta.total_services === 0) {
@@ -110,7 +109,6 @@ async function fetchServices() {
             return;
         }
 
-        // Serwisy załadowane lub max retries → render
         if (data.services.length > 0) {
             _initialLoadAttempts = _maxInitialRetries; // stop retrying
             console.log(`✅ Services loaded: ${data.services.length}`);
@@ -120,7 +118,6 @@ async function fetchServices() {
     } catch (err) {
         console.error('Fetch failed:', err);
 
-        // Retry przy błędzie (np. app jeszcze nie ready)
         if (_initialLoadAttempts < _maxInitialRetries) {
             _initialLoadAttempts++;
             var delay = Math.min(2000 * _initialLoadAttempts, 10000);
@@ -132,13 +129,13 @@ async function fetchServices() {
 
 async function checkAll() {
     var btn = document.getElementById('check-all-btn');
-    if (btn.disabled) return;
+    if (btn.disabled)return;
 
     try {
-        btn.disabled    = true;
+        btn.disabled = true;
         btn.textContent = '🚀 Triggering…';
 
-        var res  = await fetch('/api/trigger-manual-check', { method: 'POST' });
+        var res = await fetch('/api/trigger-manual-check', { method: 'POST' });
         var data = await res.json();
 
         if (res.ok) {
@@ -146,7 +143,7 @@ async function checkAll() {
 
             _applyRunningState(true);
 
-            var timeLeft = 150; // 150 sekund = 2.5 min
+            var timeLeft = 120; // 120 sekund = 2.0 min
             var countdownInterval = setInterval(function() {
                 timeLeft--;
                 var minutes = Math.floor(timeLeft / 60);
@@ -191,7 +188,7 @@ async function checkAll() {
 
                 await fetchServices();
 
-            }, 150000); // 150000ms = 2.5 min
+            }, 120000); // 120000ms = 2.0 min
 
         } else {
             alert('❌ Failed to trigger check:\n' + (data.error || 'Unknown error'));
