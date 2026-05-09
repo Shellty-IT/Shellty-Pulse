@@ -106,18 +106,56 @@ async function checkAll() {
         var data = await res.json();
 
         if (res.ok) {
-            // Ustaw czas startu dla countdown
             _checkStartedAt = Date.now();
 
-            // Pokaż banner z countdown
             _applyRunningState(true);
 
-            // Po 150s (2.5 min) odśwież i resetuj
+            var timeLeft = 150; // 150 sekund = 2.5 min
+            var countdownInterval = setInterval(function() {
+                timeLeft--;
+                var minutes = Math.floor(timeLeft / 60);
+                var seconds = timeLeft % 60;
+                btn.textContent = '⏳ ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+
+                if (timeLeft <= 0) {
+                    clearInterval(countdownInterval);
+                }
+            }, 1000);
+
             setTimeout(async function() {
+                console.log('✅ GitHub Actions workflow completed — refreshing all service statuses...');
+
                 _applyRunningState(false);
                 _checkStartedAt = null;
+                btn.textContent = '⟳ Check All Now';
+                btn.disabled = false;
+
+                var servicesRes = await fetch('/api/services');
+                var servicesData = await servicesRes.json();
+                var services = servicesData.services;
+
+                console.log(`Checking ${services.length} services individually...`);
+
+                for (var i = 0; i < services.length; i++) {
+                    var svc = services[i];
+                    console.log(`  Checking ${svc.name}...`);
+
+                    try {
+                        await fetch('/api/services/' + svc.id + '/check', { method: 'POST' });
+                    } catch (err) {
+                        console.error(`  Failed to check ${svc.name}:`, err);
+                    }
+
+                    if (i < services.length - 1) {
+                        await new Promise(r => setTimeout(r, 500));
+                    }
+                }
+
+                console.log('✅ All services refreshed');
+
                 await fetchServices();
-            }, 150000);
+
+            }, 150000); // 150000ms = 2.5 min
 
         } else {
             alert('❌ Failed to trigger check:\n' + (data.error || 'Unknown error'));
