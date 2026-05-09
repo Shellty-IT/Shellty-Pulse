@@ -6,6 +6,8 @@ Changes vs previous version:
   (file does not exist). GitHub Variables sync now handled inline via
   _sync_business_hours_to_github() using direct GitHub REST API calls.
 - Fixed _check_lock import (use checker_mod namespace instead of direct import)
+- Added /api/trigger-manual-check endpoint (triggers GitHub Actions workflow)
+- Deprecated /api/check-all (returns 410 Gone)
 """
 from __future__ import annotations
 
@@ -235,7 +237,9 @@ def verify_all_route():
             set_check_running(False)
             checker_mod._check_lock.release()
 
-    threading.Thread(target=_verify_in_background, daemon=True, name="verify-thread").start()
+    threading.Thread(
+        target=_verify_in_background, daemon=True, name="verify-thread"
+    ).start()
 
     return jsonify({
         "status":         "verifying",
@@ -248,28 +252,19 @@ def verify_all_route():
 
 @api_bp.post("/check-all")
 def check_all_route():
-    """Legacy endpoint — used by dashboard 'Check All Now' button."""
-    from pulse.checker import check_all_services
-
-    if is_check_running():
-        logger.info("check-all: already running — returning 409")
-        return jsonify({"message": "Check already in progress.", "check_running": True}), 409
-
-    threading.Thread(
-        target=check_all_services, daemon=True, name="manual-check-all-thread"
-    ).start()
-
-    logger.info("Manual check-all triggered — running in background.")
-
-    with state.services_lock:
-        services_data = [svc.copy() for svc in state.services]
-
+    """
+    Deprecated endpoint.
+    Dashboard now uses /api/trigger-manual-check (GitHub Actions).
+    Kept for backwards compatibility only.
+    """
+    logger.warning(
+        "check-all called — deprecated endpoint. "
+        "Use /api/trigger-manual-check instead."
+    )
     return jsonify({
-        "message":        "Health checks started in background.",
-        "services":       services_data,
-        "overall_status": get_overall_status(),
-        "check_running":  True,
-    }), 202
+        "error": "Deprecated. Use /api/trigger-manual-check instead.",
+        "hint":  "POST /api/trigger-manual-check triggers GitHub Actions workflow.",
+    }), 410
 
 
 # ── POST /api/wake-and-check ─────────────────────────────────────────────────
@@ -315,10 +310,13 @@ def wake_and_check_route():
         from pulse.checker import check_all_services
         if is_check_running():
             return jsonify({
-                "status": "ok", "awake": True, "checking": True,
+                "status":       "ok",
+                "awake":        True,
+                "checking":     True,
                 "triggered_by": "github-actions",
-                "message": "Skipped: check already running.",
-                "auto_ping": auto_ping, "ping_interval": ping_interval,
+                "message":      "Skipped: check already running.",
+                "auto_ping":    auto_ping,
+                "ping_interval": ping_interval,
             }), 200
 
         threading.Thread(
@@ -326,18 +324,24 @@ def wake_and_check_route():
         ).start()
 
         return jsonify({
-            "status": "ok", "awake": True, "checking": True,
-            "triggered_by": "github-actions",
-            "message": "Service checks started in background.",
-            "auto_ping": auto_ping, "ping_interval": ping_interval,
+            "status":        "ok",
+            "awake":         True,
+            "checking":      True,
+            "triggered_by":  "github-actions",
+            "message":       "Service checks started in background.",
+            "auto_ping":     auto_ping,
+            "ping_interval": ping_interval,
         }), 200
-    else:
-        return jsonify({
-            "status": "ok", "awake": True, "checking": False,
-            "triggered_by": "github-actions",
-            "message": f"Skipped: {skip_reason}",
-            "auto_ping": auto_ping, "ping_interval": ping_interval,
-        }), 200
+
+    return jsonify({
+        "status":        "ok",
+        "awake":         True,
+        "checking":      False,
+        "triggered_by":  "github-actions",
+        "message":       f"Skipped: {skip_reason}",
+        "auto_ping":     auto_ping,
+        "ping_interval": ping_interval,
+    }), 200
 
 
 # ── POST /api/toggle-auto-ping ───────────────────────────────────────────────
@@ -350,7 +354,10 @@ def toggle_auto_ping_route():
         new_state = state.auto_ping_enabled
     label = "enabled" if new_state else "disabled"
     logger.info("Auto-ping toggled: %s", label)
-    return jsonify({"auto_ping_enabled": new_state, "message": f"Auto-ping {label}."})
+    return jsonify({
+        "auto_ping_enabled": new_state,
+        "message":           f"Auto-ping {label}.",
+    })
 
 
 # ── POST /api/ping-interval ──────────────────────────────────────────────────
@@ -373,11 +380,71 @@ def set_ping_interval_route():
         state.ping_interval = new_interval
 
     if scheduler and scheduler.running:
-        scheduler.reschedule_job("health_check_job", trigger="interval", seconds=new_interval)
+        scheduler.reschedule_job(
+            "health_check_job", trigger="interval", seconds=new_interval
+        )
 
     label = AVAILABLE_INTERVALS[new_interval]
     logger.info("Ping interval changed to %s (%ds)", label, new_interval)
-    return jsonify({"interval": new_interval, "label": label, "message": f"Auto-ping interval set to {label}."})
+    return jsonify({
+        "interval": new_interval,
+        "label":    label,
+        "message":  f"Auto-ping interval set to {label}.",
+    })
+
+
+# ── POST /api/trigger-manual-check ──────────────────────────────────────────
+
+@api_bp.post("/trigger-manual-check")
+def trigger_manual_check_route():
+    """
+    Trigger GitHub Actions workflow manually from dashboard.
+    Bypasses business hours check.
+    Requires GITHUB_TOKEN with workflow scope and GITHUB_REPO.
+    """
+    if not _GITHUB_TOKEN or not _GITHUB_REPO:
+        logger.warning("trigger-manual-check: GITHUB_TOKEN or GITHUB_REPO not set")
+        return jsonify({"error": "GitHub integration not configured."}), 500
+
+    workflow_file = "wake-shellty-pulse.yml"
+    api_url = (
+        f"https://api.github.com/repos/{_GITHUB_REPO}"
+        f"/actions/workflows/{workflow_file}/dispatches"
+    )
+    headers = {
+        "Authorization":        f"Bearer {_GITHUB_TOKEN}",
+        "Accept":               "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    payload = {
+        "ref": "main",
+        "inputs": {"manual_trigger": "true"},
+    }
+
+    try:
+        logger.info("Triggering GitHub Actions workflow manually...")
+        resp = http_requests.post(api_url, headers=headers, json=payload, timeout=10)
+
+        if resp.status_code == 204:
+            logger.info("✅ GitHub Actions workflow triggered successfully")
+            return jsonify({
+                "status":   "triggered",
+                "message":  "GitHub Actions started. Services will be checked in ~2.5 min.",
+                "workflow": workflow_file,
+            }), 202
+
+        logger.error(
+            "GitHub workflow trigger failed: HTTP %d — %s",
+            resp.status_code, resp.text[:200],
+        )
+        return jsonify({
+            "error":   f"GitHub API error: HTTP {resp.status_code}",
+            "details": resp.text[:200],
+        }), 500
+
+    except Exception as exc:
+        logger.error("Failed to trigger GitHub workflow: %s", exc)
+        return jsonify({"error": str(exc)}), 500
 
 
 # ── POST /api/business-hours ─────────────────────────────────────────────────

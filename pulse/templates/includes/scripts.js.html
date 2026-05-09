@@ -99,34 +99,36 @@ async function checkAll() {
     if (btn.disabled) return;
 
     try {
-        // Phase 1: Fire
-        btn.disabled = true;
-        btn.textContent = '🔥 Firing...';
-        await fetch('/api/fire-all', { method: 'POST' });
+        btn.disabled    = true;
+        btn.textContent = '🚀 Triggering…';
 
-        // Phase 2: Wait 120s
-        btn.textContent = '⏳ Waiting 120s...';
-        var countdown = 120;
-        var timer = setInterval(function() {
-            countdown--;
-            btn.textContent = '⏳ Wait ' + countdown + 's...';
-            if (countdown <= 0) clearInterval(timer);
-        }, 1000);
+        var res  = await fetch('/api/trigger-manual-check', { method: 'POST' });
+        var data = await res.json();
 
-        await new Promise(r => setTimeout(r, 120000));
+        if (res.ok) {
+            // Ustaw czas startu dla countdown
+            _checkStartedAt = Date.now();
 
-        // Phase 3: Verify
-        btn.textContent = '✔️ Verifying...';
-        await fetch('/api/verify-all', { method: 'POST' });
+            // Pokaż banner z countdown
+            _applyRunningState(true);
 
-        btn.textContent = '⟳ Check All Now';
-        btn.disabled = false;
+            // Po 150s (2.5 min) odśwież i resetuj
+            setTimeout(async function() {
+                _applyRunningState(false);
+                _checkStartedAt = null;
+                await fetchServices();
+            }, 150000);
 
-        await fetchServices();
+        } else {
+            alert('❌ Failed to trigger check:\n' + (data.error || 'Unknown error'));
+            btn.disabled    = false;
+            btn.textContent = '⟳ Check All Now';
+        }
     } catch (err) {
         console.error(err);
+        alert('❌ Error: ' + err.message);
+        btn.disabled    = false;
         btn.textContent = '⟳ Check All Now';
-        btn.disabled = false;
     }
 }
 

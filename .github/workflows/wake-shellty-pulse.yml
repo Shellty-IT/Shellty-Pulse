@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
+    inputs:
+      manual_trigger:
+        description: 'Manual trigger from dashboard'
+        required: false
+        default: 'false'
 
 permissions:
   contents: read
@@ -12,7 +17,7 @@ jobs:
   wake:
     name: "🔔 Wake Shellty Pulse"
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
 
     env:
       APP_URL: https://shellty-pulse.onrender.com
@@ -21,6 +26,15 @@ jobs:
       - name: Check business hours
         id: check-time
         run: |
+          MANUAL="${{ github.event.inputs.manual_trigger }}"
+
+          # Manual trigger z dashboardu — pomija business hours
+          if [ "$MANUAL" = "true" ]; then
+            echo "🔵 Manual trigger — bypassing business hours"
+            echo "should_wake=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           BH_ENABLED="${{ vars.BH_ENABLED }}"
           BH_START="${{ vars.BH_START }}"
           BH_END="${{ vars.BH_END }}"
@@ -53,37 +67,104 @@ jobs:
             echo "should_wake=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Wake Shellty Pulse
+      # ── Phase 1: Wake Shellty Pulse + Fire all services ─────────────────────
+      - name: 🔥 Phase 1 — Fire all services
         if: steps.check-time.outputs.should_wake == 'true'
         run: |
           echo "🔔 Waking Shellty Pulse..."
-          
-          response=$(curl -sf --max-time 90 -X POST \
-            -H "Content-Type: application/json" \
-            "$APP_URL/api/wake-and-check" || echo "FAILED")
+          curl -sf --max-time 30 "$APP_URL/health" > /dev/null 2>&1 || echo "(Pulse was sleeping — waking)"
 
-          if [ "$response" = "FAILED" ]; then
-            echo "❌ Failed to wake Shellty Pulse"
+          echo "🔥 Fetching service list from Shellty Pulse..."
+          SERVICES_JSON=$(curl -sf --max-time 30 "$APP_URL/api/services" || echo "")
+
+          if [ -z "$SERVICES_JSON" ]; then
+            echo "❌ Failed to fetch service list from Shellty Pulse"
             exit 1
           fi
 
-          echo "✅ Response:"
-          echo "$response" | python3 -c "
+          echo "🔥 Firing all services (kick cold starts)..."
+          echo "$SERVICES_JSON" | python3 -c "
           import sys, json
-          try:
-              data = json.load(sys.stdin)
-              print(f'  status   : {data.get(\"status\")}')
-              print(f'  checking : {data.get(\"checking\")}')
-              print(f'  message  : {data.get(\"message\")}')
-          except:
-              print(sys.stdin.read())
-          " || echo "$response"
+          data = json.load(sys.stdin)
+          services = data.get('services', [])
+          print(f'  Found {len(services)} services')
+          for svc in services:
+              print(svc['url'])
+          " | tail -n +2 | while read -r url; do
+            echo "  🔥 Firing: $url"
+            curl -sf --max-time 10 "$url" > /dev/null 2>&1 || echo "     (no response yet — cold start kicked)"
+          done
+
+          echo "✅ All fire requests sent"
+
+      # ── Phase 2: Wait for cold starts ────────────────────────────────────────
+      - name: ⏳ Phase 2 — Wait for cold starts
+        if: steps.check-time.outputs.should_wake == 'true'
+        run: |
+          echo "⏳ Waiting 120 seconds for Render cold starts..."
+          sleep 120
+          echo "✅ Cold start window complete"
+
+      # ── Phase 3: Verify all services ─────────────────────────────────────────
+      - name: ✔️ Phase 3 — Verify all services
+        if: steps.check-time.outputs.should_wake == 'true'
+        run: |
+          echo "✔️ Verifying all services..."
+
+          SERVICES_JSON=$(curl -sf --max-time 30 "$APP_URL/api/services" || echo "")
+
+          if [ -z "$SERVICES_JSON" ]; then
+            echo "❌ Failed to fetch service list"
+            exit 1
+          fi
+
+          echo "$SERVICES_JSON" | python3 -c "
+          import sys, json, subprocess
+
+          data = json.load(sys.stdin)
+          services = data.get('services', [])
+          print(f'Verifying {len(services)} services...')
+
+          success = 0
+          failed  = 0
+
+          for svc in services:
+              name = svc['name']
+              url  = svc['url']
+              print(f'  ✔️  Checking: {name}')
+              try:
+                  result = subprocess.run(
+                      ['curl', '-sf', '--max-time', '30', '-o', '/dev/null',
+                       '-w', '%{http_code}', url],
+                      capture_output=True, text=True
+                  )
+                  code = result.stdout.strip()
+                  if code == '200':
+                      print(f'      ✅ OK (HTTP {code})')
+                      success += 1
+                  else:
+                      print(f'      ❌ FAILED (HTTP {code})')
+                      failed += 1
+              except Exception as e:
+                  print(f'      ❌ ERROR: {e}')
+                  failed += 1
+
+          print()
+          print(f'Results: {success} OK, {failed} failed')
+          "
+
+          echo "✅ Verification complete"
 
       - name: Summary
         if: always()
         run: |
+          MANUAL="${{ github.event.inputs.manual_trigger }}"
           if [ "${{ steps.check-time.outputs.should_wake }}" = "true" ]; then
-            echo "✅ Shellty Pulse woken — checks services based on auto_ping setting"
+            if [ "$MANUAL" = "true" ]; then
+              echo "✅ Manual check complete (business hours bypassed)"
+            else
+              echo "✅ Scheduled check complete"
+            fi
           else
             echo "⏭️ Skipped — outside business hours or disabled"
           fi
