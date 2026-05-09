@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timezone
 from flask import Flask, jsonify
 
+# Track app start time for uptime calculation
 _start_time = time.time()
 
 
@@ -27,17 +28,25 @@ def create_app(testing: bool = False) -> Flask:
     def health_check():
         """Health check for Docker/Render and CI tests."""
         from pulse import state
+        from pulse.scheduler import scheduler
+
         with state.services_lock:
             total = len(state.services)
+
+        # Check if scheduler is running
+        scheduler_running = False
+        if scheduler is not None:
+            scheduler_running = scheduler.running
 
         uptime = int(time.time() - _start_time)
 
         return jsonify({
-            "status": "ok",                    # ← zmienione z "healthy"
-            "service": "shellty-pulse",        # ← dodane
-            "version": VERSION,                # ← dodane
-            "uptime_seconds": uptime,          # ← dodane
-            "services_count": total,
+            "status": "ok",
+            "service": "shellty-pulse",
+            "version": VERSION,
+            "uptime_seconds": uptime,
+            "monitored_services": total,         # ← DODANE
+            "scheduler_running": scheduler_running,  # ← DODANE
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }), 200
 
