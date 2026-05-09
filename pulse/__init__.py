@@ -3,7 +3,8 @@ Shellty Pulse — Flask application factory.
 """
 from __future__ import annotations
 
-from flask import Flask
+from datetime import datetime, timezone
+from flask import Flask, jsonify
 
 
 def create_app(testing: bool = False) -> Flask:
@@ -15,12 +16,23 @@ def create_app(testing: bool = False) -> Flask:
         template_folder='templates'
     )
 
-    # Load config
     from pulse.config import VERSION
     app.config['VERSION'] = VERSION
     app.config['TESTING'] = testing
 
-    # Register blueprints
+    @app.route('/health')
+    def health_check():
+        """Health check for Docker/Render."""
+        from pulse import state
+        with state.services_lock:
+            total = len(state.services)
+        return jsonify({
+            "status": "healthy",
+            "services_count": total,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }), 200
+    # ────────────────────────────────────────────────────────────────────────
+
     from pulse.routes.api import api_bp
     from pulse.routes.dashboard import dashboard_bp
 
