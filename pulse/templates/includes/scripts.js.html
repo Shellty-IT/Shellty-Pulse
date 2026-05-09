@@ -5,6 +5,7 @@ var POLL_ACTIVE  = 4000;    // poll co 4s gdy check trwa
 var COLD_START_WAIT = 120;  // MUSI być równe GitHub Actions sleep (120s)
 
 var STATUS_CONFIG = {
+    checking:    { icon: '🔵', label: 'Checking Services…'      },
     operational: { icon: '🟢', label: 'All Systems Operational' },
     degraded:    { icon: '🟡', label: 'Performance Degraded'    },
     slow:        { icon: '🟠', label: 'Slow Response Detected'  },
@@ -15,8 +16,8 @@ var STATUS_CONFIG = {
 // ── Stan lokalny ─────────────────────────────────────────────────────────────
 var _pollTimer      = null;
 var _countdownTimer = null;
-var _checkStartedAt = null;   // timestamp kliknięcia "Check All Now"
-var _wasRunning     = false;  // czy poprzedni poll zwrócił check_running=true
+var _checkStartedAt = null;
+var _wasRunning     = false;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function getStatusConfig(s) { return STATUS_CONFIG[s] || STATUS_CONFIG.unknown; }
@@ -56,8 +57,6 @@ function _applyRunningState(running) {
 // ── Countdown (Faza 1/2/3) ────────────────────────────────────────────────────
 function _startCountdown() {
     _stopCountdown();
-    // Jeśli nie mamy timestampa (check wystartował zanim otworzyliśmy dashboard)
-    // używamy teraz jako przybliżenia — lepsze niż nic
     if (!_checkStartedAt) _checkStartedAt = Date.now();
 
     function tick() {
@@ -66,16 +65,13 @@ function _startCountdown() {
         var countdown = document.getElementById('banner-countdown');
 
         if (elapsed < 8) {
-            // Faza 1: fire (trwa ~3-5s)
             phase.textContent     = 'Phase 1 — waking all services…';
             countdown.textContent = '';
         } else if (elapsed < COLD_START_WAIT + 8) {
-            // Faza 2: czekamy na cold start
             var remaining = Math.max(0, Math.ceil(COLD_START_WAIT - (elapsed - 8)));
             phase.textContent     = 'Phase 2 — waiting for cold starts…';
             countdown.textContent = '(' + remaining + 's remaining)';
         } else {
-            // Faza 3: weryfikacja
             phase.textContent     = 'Phase 3 — verifying all services…';
             countdown.textContent = '';
         }
@@ -103,18 +99,15 @@ async function checkAll() {
     if (btn.disabled) return;
 
     try {
-        // DEPRECATED endpoint — ale dashboard nadal używa (dla backwards compatibility)
         var res = await fetch('/api/check-all', { method: 'POST' });
 
         if (res.status === 409) {
-            // Już trwa — pokaż banner bez alertu
             if (!_checkStartedAt) _checkStartedAt = Date.now();
             _applyRunningState(true);
             return;
         }
 
         if (res.ok) {
-            // 202 Accepted — check wystartował
             _checkStartedAt = Date.now();
             _applyRunningState(true);
             await fetchServices();
@@ -207,26 +200,21 @@ function renderDashboard(data) {
     var services = data.services;
     var meta     = data.meta;
 
-    // Overall status
+    // Overall status — "checking" obsługiwane przez models.py i STATUS_CONFIG
     var oel  = document.getElementById('overall-status');
     var ocfg = getStatusConfig(meta.overall_status);
     oel.className   = 'overall-status ' + meta.overall_status;
     oel.textContent = ocfg.icon + ' ' + ocfg.label;
 
-    // ── Kluczowa logika: server jest źródłem prawdy dla check_running ──
+    // Sync check_running — server jest źródłem prawdy
     var running = meta.check_running;
 
     if (running && !_wasRunning) {
-        // Check właśnie wystartował (wykryty przez polling)
-        // Jeśli nie kliknęliśmy sami (brak _checkStartedAt) → zewnętrzny trigger
         if (!_checkStartedAt) _checkStartedAt = Date.now();
     }
-
     if (!running && _wasRunning) {
-        // Check właśnie się skończył
         _checkStartedAt = null;
     }
-
     _wasRunning = running;
     _applyRunningState(running);
 
