@@ -5,6 +5,7 @@ Changes vs previous version:
 - Removed `from pulse.github_sync import sync_business_hours_to_github`
   (file does not exist). GitHub Variables sync now handled inline via
   _sync_business_hours_to_github() using direct GitHub REST API calls.
+- Fixed _check_lock import (use checker_mod namespace instead of direct import)
 """
 from __future__ import annotations
 
@@ -23,8 +24,9 @@ from pulse.checker import (
     set_check_running,
     fire_all,
     verify_all,
-    _check_lock,
 )
+import pulse.checker as checker_mod
+
 from pulse.config import (
     AVAILABLE_INTERVALS,
     BUSINESS_HOURS_TIMEZONE,
@@ -40,7 +42,7 @@ api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 _WAKE_SECRET  = os.environ.get("WAKE_SECRET", "")
 _GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-_GITHUB_REPO  = os.environ.get("GITHUB_REPO", "")   # e.g. "Shellty-IT/Shellty-Pulse"
+_GITHUB_REPO  = os.environ.get("GITHUB_REPO", "")
 
 
 # ── GitHub Variables sync ────────────────────────────────────────────────────
@@ -126,6 +128,7 @@ def get_services():
 
 @api_bp.post("/services")
 def add_service_route():
+    """Add a new service to monitor."""
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "Request body must be valid JSON."}), 400
@@ -153,6 +156,7 @@ def add_service_route():
 
 @api_bp.delete("/services/<service_id>")
 def delete_service_route(service_id: str):
+    """Remove a service by ID."""
     with state.services_lock:
         for i, svc in enumerate(state.services):
             if svc["id"] == service_id:
@@ -166,6 +170,7 @@ def delete_service_route(service_id: str):
 
 @api_bp.post("/services/<service_id>/check")
 def check_service_route(service_id: str):
+    """Manually trigger a health check for a single service."""
     target = None
     with state.services_lock:
         for svc in state.services:
@@ -217,7 +222,7 @@ def verify_all_route():
     logger.info("✔️ Verifying all %d services...", len(snapshot))
 
     def _verify_in_background():
-        if not _check_lock.acquire(blocking=False):
+        if not checker_mod._check_lock.acquire(blocking=False):
             logger.warning("verify-all: lock already held")
             return
         try:
@@ -228,7 +233,7 @@ def verify_all_route():
             logger.info("✔️ Verification complete.")
         finally:
             set_check_running(False)
-            _check_lock.release()
+            checker_mod._check_lock.release()
 
     threading.Thread(target=_verify_in_background, daemon=True, name="verify-thread").start()
 
@@ -339,6 +344,7 @@ def wake_and_check_route():
 
 @api_bp.post("/toggle-auto-ping")
 def toggle_auto_ping_route():
+    """Toggle automatic periodic health checking on / off."""
     with state.services_lock:
         state.auto_ping_enabled = not state.auto_ping_enabled
         new_state = state.auto_ping_enabled
@@ -351,6 +357,7 @@ def toggle_auto_ping_route():
 
 @api_bp.post("/ping-interval")
 def set_ping_interval_route():
+    """Change the auto-ping interval and reschedule the background job."""
     from pulse.scheduler import scheduler
 
     data = request.get_json(silent=True)

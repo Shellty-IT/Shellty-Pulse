@@ -14,18 +14,36 @@
     .brand-accent { color: #58a6ff; }
     .subtitle { color: #8b949e; font-size: 0.95rem; }
     .overall-status { text-align: center; padding: 1rem 2rem; border-radius: 12px; margin-bottom: 1rem; font-size: 1.1rem; font-weight: 600; border: 1px solid #30363d; }
+    .overall-status.checking { background: #0d1a2e; border-color: #1f6feb; color: #58a6ff; }
     .overall-status.operational { background: #0d1f0d; border-color: #238636; color: #3fb950; }
-    .overall-status.degraded    { background: #1f1d0d; border-color: #9e6a03; color: #d29922; }
-    .overall-status.slow        { background: #1f160d; border-color: #bd5a00; color: #db6d28; }
-    .overall-status.down        { background: #1f0d0d; border-color: #da3633; color: #f85149; }
-    .overall-status.unknown     { background: #161b22; border-color: #30363d; color: #8b949e; }
-    /* checking — neutral blue, shown while check is in progress */
-    .overall-status.checking    { background: #0d1a2e; border-color: #1f6feb; color: #79c0ff; }
+    .overall-status.degraded { background: #1f1d0d; border-color: #9e6a03; color: #d29922; }
+    .overall-status.slow { background: #1f160d; border-color: #bd5a00; color: #db6d28; }
+    .overall-status.down { background: #1f0d0d; border-color: #da3633; color: #f85149; }
+    .overall-status.unknown { background: #161b22; border-color: #30363d; color: #8b949e; }
 
     /* ── Check progress banner ── */
-    #check-banner { display: none; align-items: center; gap: 0.75rem; padding: 0.75rem 1.25rem; margin-bottom: 1rem; background: #0d1a2e; border: 1px solid #1f6feb; border-radius: 10px; color: #79c0ff; font-size: 0.9rem; font-weight: 500; }
+    #check-banner {
+        display: none;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem 1.25rem;
+        margin-bottom: 1rem;
+        background: #0d1a2e;
+        border: 1px solid #1f6feb;
+        border-radius: 10px;
+        color: #79c0ff;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
     #check-banner.visible { display: flex; }
-    .banner-spinner { width: 16px; height: 16px; border: 2px solid #1f6feb; border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.9s linear infinite; flex-shrink: 0; }
+    .banner-spinner {
+        width: 16px; height: 16px;
+        border: 2px solid #1f6feb;
+        border-top-color: #58a6ff;
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+        flex-shrink: 0;
+    }
     .banner-phase { font-weight: 700; color: #58a6ff; }
     #banner-countdown { font-variant-numeric: tabular-nums; color: #8b949e; }
 
@@ -87,7 +105,7 @@
     .bh-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem; }
     .bh-header h3 { color: #f0f6fc; font-size: 1rem; margin: 0; }
     .bh-badge { font-size: 0.75rem; font-weight: 600; padding: 0.2rem 0.6rem; border-radius: 20px; letter-spacing: 0.03em; }
-    .bh-badge.on  { background: #0d1f0d; color: #3fb950; border: 1px solid #238636; }
+    .bh-badge.on { background: #0d1f0d; color: #3fb950; border: 1px solid #238636; }
     .bh-badge.off { background: #161b22; color: #484f58; border: 1px solid #30363d; }
     .bh-body { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
     .bh-control { display: flex; align-items: center; gap: 0.4rem; }
@@ -100,8 +118,8 @@
     .bh-separator { font-size: 1rem; color: #484f58; margin: 0 0.25rem; }
     .bh-tz { font-size: 0.7rem; color: #6e7681; font-style: italic; margin-left: 0.25rem; }
     .btn-bh-toggle { padding: 0.55rem 1.1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; margin-left: auto; }
-    .btn-bh-toggle.enable  { background: #238636; border-color: #238636; color: #fff; }
-    .btn-bh-toggle.enable:hover  { background: #2ea043; }
+    .btn-bh-toggle.enable { background: #238636; border-color: #238636; color: #fff; }
+    .btn-bh-toggle.enable:hover { background: #2ea043; }
     .btn-bh-toggle.disable { background: #21262d; border-color: #f85149; color: #f85149; }
     .btn-bh-toggle.disable:hover { background: #2d1b1b; }
     .bh-note { margin-top: 0.75rem; font-size: 0.75rem; color: #6e7681; font-style: italic; line-height: 1.5; }

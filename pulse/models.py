@@ -1,26 +1,12 @@
 """
-Service model — factory function and status helpers.
-
-Pure functions, no side effects, no I/O.
+Service data model and overall status calculation.
 """
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
-
-# ── Status priority (higher = worse) ────────────────────────────────────────
-_STATUS_PRIORITY: dict[str, int] = {
-    "unknown":     0,
-    "operational": 1,
-    "degraded":    2,
-    "slow":        3,
-    "down":        4,
-}
-
-
-def generate_id() -> str:
-    """Return a short random hex ID (8 chars)."""
-    return uuid.uuid4().hex[:8]
+from pulse import state
 
 
 def create_service(
@@ -29,74 +15,89 @@ def create_service(
     frontend_url: str | None = None,
 ) -> dict:
     """
-    Build a new service record with default/empty values.
+    Create a new service record with default values.
 
     Args:
-        name:         Display name shown on the dashboard.
-        url:          Backend health-check URL (the URL that gets pinged).
-        frontend_url: Optional link to the user-facing application.
+        name: Display name of the service
+        url: Health check endpoint URL
+        frontend_url: Optional user-facing URL
 
     Returns:
-        Service dict ready to be appended to ``state.services``.
+        Service dict with all fields initialized
     """
     return {
-        "id":                generate_id(),
-        "name":              name,
-        "url":               url,
-        "frontend_url":      frontend_url,
-        "status":            "unknown",
-        "response_time_ms":  None,
-        "last_check":        None,
-        "total_checks":      0,
-        "successful_checks": 0,
-        "uptime_percent":    None,
+        "id":                 str(uuid.uuid4()),
+        "name":               name,
+        "url":                url,
+        "frontend_url":       frontend_url,
+        "status":             "unknown",
+        "response_time_ms":   None,
+        "last_check":         None,
+        "total_checks":       0,
+        "successful_checks":  0,
+        "uptime_percent":     None,
     }
 
 
-def determine_status(response_time_seconds: float, success: bool) -> str:
+def determine_status(elapsed_seconds: float, success: bool) -> str:
     """
-    Map response time + HTTP success to a status string.
-
-    Rules:
-        HTTP 200 + <  1 s  → operational
-        HTTP 200 + 1–3 s   → degraded
-        HTTP 200 + >  3 s  → slow
-        HTTP error/timeout → down
+    Determine service status based on response time.
 
     Args:
-        response_time_seconds: Elapsed wall-clock time in seconds.
-        success:               True when HTTP status code is 200.
+        elapsed_seconds: Response time in seconds
+        success: Whether the check succeeded (HTTP 200)
 
     Returns:
-        One of: ``operational`` | ``degraded`` | ``slow`` | ``down``
+        Status string: operational, degraded, slow, or down
     """
     if not success:
         return "down"
-    if response_time_seconds < 1.0:
+
+    if elapsed_seconds < 1.0:
         return "operational"
-    if response_time_seconds <= 3.0:
+    elif elapsed_seconds <= 3.0:
         return "degraded"
-    return "slow"
+    else:
+        return "slow"
 
 
 def get_overall_status() -> str:
     """
-    Return the worst status across all currently monitored services.
+    Calculate overall system status based on all services.
 
-    Priority (highest = worst): down > slow > degraded > operational > unknown
-
-    Must be called **without** holding ``state.services_lock``
-    (acquires it internally).
+    Returns:
+        - "checking": if check is currently running
+        - "down": if any service is down
+        - "slow": if any service is slow (but none down)
+        - "degraded": if any service is degraded (but none down/slow)
+        - "operational": if all services are operational
+        - "unknown": if no services configured or none checked yet
     """
-    from pulse import state  # local import — avoids circular dependency
+    from pulse.checker import is_check_running
+
+    # Jeśli check w toku → status "checking"
+    if is_check_running():
+        return "checking"
 
     with state.services_lock:
         if not state.services:
             return "unknown"
 
-        worst = "unknown"
-        for svc in state.services:
-            status = svc.get("status", "unknown")
-            if _STATUS_PRIORITY.get(status, 0) > _STATUS_PRIORITY.get(worst, 0):
-                worst = status
-        return worst
+        statuses = [svc["status"] for svc in state.services]
+
+        # Jeśli wszystkie unknown → nie było jeszcze checku
+        if all(s == "unknown" for s in statuses):
+            return "unknown"
+
+        # Priorytet: down > slow > degraded > operational
+        if "down" in statuses:
+            return "down"
+        if "slow" in statuses:
+            return "slow"
+        if "degraded" in statuses:
+            return "degraded"
+        if all(s == "operational" for s in statuses):
+            return "operational"
+
+        # Mixed unknown + operational → partial operational
+        return "operational"
