@@ -99,20 +99,35 @@ async function checkAll() {
     if (btn.disabled) return;
 
     try {
-        var res = await fetch('/api/check-all', { method: 'POST' });
+        // Phase 1: Fire
+        btn.disabled = true;
+        btn.textContent = '🔥 Firing...';
+        await fetch('/api/fire-all', { method: 'POST' });
 
-        if (res.status === 409) {
-            if (!_checkStartedAt) _checkStartedAt = Date.now();
-            _applyRunningState(true);
-            return;
-        }
+        // Phase 2: Wait 120s
+        btn.textContent = '⏳ Waiting 120s...';
+        var countdown = 120;
+        var timer = setInterval(function() {
+            countdown--;
+            btn.textContent = '⏳ Wait ' + countdown + 's...';
+            if (countdown <= 0) clearInterval(timer);
+        }, 1000);
 
-        if (res.ok) {
-            _checkStartedAt = Date.now();
-            _applyRunningState(true);
-            await fetchServices();
-        }
-    } catch (err) { console.error('checkAll error:', err); }
+        await new Promise(r => setTimeout(r, 120000));
+
+        // Phase 3: Verify
+        btn.textContent = '✔️ Verifying...';
+        await fetch('/api/verify-all', { method: 'POST' });
+
+        btn.textContent = '⟳ Check All Now';
+        btn.disabled = false;
+
+        await fetchServices();
+    } catch (err) {
+        console.error(err);
+        btn.textContent = '⟳ Check All Now';
+        btn.disabled = false;
+    }
 }
 
 async function checkService(id) {

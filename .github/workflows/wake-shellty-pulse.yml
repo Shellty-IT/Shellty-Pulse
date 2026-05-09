@@ -16,10 +16,9 @@ jobs:
 
     env:
       APP_URL: https://shellty-pulse.onrender.com
-      WAKE_SECRET: ${{ secrets.WAKE_SECRET }}
 
     steps:
-      - name: Check business hours config
+      - name: Check business hours
         id: check-time
         run: |
           BH_ENABLED="${{ vars.BH_ENABLED }}"
@@ -30,14 +29,7 @@ jobs:
           echo "BH_START   : $BH_START"
           echo "BH_END     : $BH_END"
 
-          # Jeśli brak zmiennych → domyślnie disabled
-          if [ -z "$BH_ENABLED" ]; then
-            echo "⚠️ BH_ENABLED not set — defaulting to disabled"
-            echo "should_wake=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          if [ "$BH_ENABLED" != "true" ]; then
+          if [ -z "$BH_ENABLED" ] || [ "$BH_ENABLED" != "true" ]; then
             echo "⏭️ Business hours disabled — skip"
             echo "should_wake=false" >> $GITHUB_OUTPUT
             exit 0
@@ -53,29 +45,25 @@ jobs:
           echo "Current hour (CET): $current_hour"
           echo "Business hours    : ${BH_START}:00 – ${BH_END}:00 CET"
 
-          if [ "$current_hour" -ge "$BH_START" ] && \
-             [ "$current_hour" -lt "$BH_END" ]; then
+          if [ "$current_hour" -ge "$BH_START" ] && [ "$current_hour" -lt "$BH_END" ]; then
             echo "✅ Within business hours — will wake"
             echo "should_wake=true" >> $GITHUB_OUTPUT
           else
-            echo "⏭️ Outside business hours — skip (saving Render hours)"
+            echo "⏭️ Outside business hours — skip"
             echo "should_wake=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Wake Shellty Pulse
         if: steps.check-time.outputs.should_wake == 'true'
         run: |
-          echo "🔔 Waking Shellty Pulse via /api/wake-and-check..."
-
-          response=$(curl -sf \
-            --max-time 90 \
-            -X POST \
+          echo "🔔 Waking Shellty Pulse..."
+          
+          response=$(curl -sf --max-time 90 -X POST \
             -H "Content-Type: application/json" \
-            -H "X-Wake-Secret: $WAKE_SECRET" \
-            "$APP_URL/api/wake-and-check" || echo "CURL_FAILED")
+            "$APP_URL/api/wake-and-check" || echo "FAILED")
 
-          if [ "$response" = "CURL_FAILED" ]; then
-            echo "❌ POST /api/wake-and-check failed"
+          if [ "$response" = "FAILED" ]; then
+            echo "❌ Failed to wake Shellty Pulse"
             exit 1
           fi
 
@@ -84,21 +72,18 @@ jobs:
           import sys, json
           try:
               data = json.load(sys.stdin)
-              print(f'  status      : {data.get(\"status\")}')
-              print(f'  awake       : {data.get(\"awake\")}')
-              print(f'  checking    : {data.get(\"checking\")}')
-              print(f'  auto_ping   : {data.get(\"auto_ping\")}')
-              print(f'  message     : {data.get(\"message\")}')
-          except Exception as e:
-              print(f'  (raw) {sys.stdin.read()}')
+              print(f'  status   : {data.get(\"status\")}')
+              print(f'  checking : {data.get(\"checking\")}')
+              print(f'  message  : {data.get(\"message\")}')
+          except:
+              print(sys.stdin.read())
           " || echo "$response"
 
       - name: Summary
         if: always()
         run: |
-          should="${{ steps.check-time.outputs.should_wake }}"
-          if [ "$should" = "true" ]; then
-            echo "✅ Shellty Pulse woken — handles service checks based on auto_ping"
+          if [ "${{ steps.check-time.outputs.should_wake }}" = "true" ]; then
+            echo "✅ Shellty Pulse woken — checks services based on auto_ping setting"
           else
             echo "⏭️ Skipped — outside business hours or disabled"
           fi
