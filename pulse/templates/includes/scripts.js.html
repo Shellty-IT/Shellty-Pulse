@@ -18,6 +18,8 @@ var _pollTimer      = null;
 var _countdownTimer = null;
 var _checkStartedAt = null;
 var _wasRunning     = false;
+var _initialLoadAttempts = 0;
+var _maxInitialRetries = 10;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function getStatusConfig(s) { return STATUS_CONFIG[s] || STATUS_CONFIG.unknown; }
@@ -90,8 +92,42 @@ async function fetchServices() {
     try {
         var res  = await fetch('/api/services');
         var data = await res.json();
+
+        // Jeśli pierwszy load i lista pusta → retry z opóźnieniem
+        if (_initialLoadAttempts < _maxInitialRetries &&
+            data.services.length === 0 &&
+            data.meta.total_services === 0) {
+
+            _initialLoadAttempts++;
+            var delay = Math.min(1000 * _initialLoadAttempts, 5000); // max 5s
+
+            console.log(
+                `⏳ Services not loaded yet (attempt ${_initialLoadAttempts}/${_maxInitialRetries}), ` +
+                `retrying in ${delay}ms...`
+            );
+
+            setTimeout(fetchServices, delay);
+            return;
+        }
+
+        // Serwisy załadowane lub max retries → render
+        if (data.services.length > 0) {
+            _initialLoadAttempts = _maxInitialRetries; // stop retrying
+            console.log(`✅ Services loaded: ${data.services.length}`);
+        }
+
         renderDashboard(data);
-    } catch (err) { console.error('Fetch failed:', err); }
+    } catch (err) {
+        console.error('Fetch failed:', err);
+
+        // Retry przy błędzie (np. app jeszcze nie ready)
+        if (_initialLoadAttempts < _maxInitialRetries) {
+            _initialLoadAttempts++;
+            var delay = Math.min(2000 * _initialLoadAttempts, 10000);
+            console.log(`❌ Fetch error, retrying in ${delay}ms...`);
+            setTimeout(fetchServices, delay);
+        }
+    }
 }
 
 async function checkAll() {
@@ -362,6 +398,7 @@ function renderDashboard(data) {
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
-fetchServices();
+console.log('🚀 Shellty Pulse Dashboard starting...');
+fetchServices();  // pierwsza próba natychmiast
 _setPolling(POLL_IDLE);
 </script>
