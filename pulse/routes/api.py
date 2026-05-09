@@ -248,24 +248,42 @@ def verify_all_route():
     }), 202
 
 
-# ── POST /api/check-all ──────────────────────────────────────────────────────
+## ── POST /api/check-all ──────────────────────────────────────────────────────
 
 @api_bp.post("/check-all")
 def check_all_route():
     """
-    Deprecated endpoint.
+    Legacy endpoint — triggers local check (may hit rate limit on Render).
     Dashboard now uses /api/trigger-manual-check (GitHub Actions).
-    Kept for backwards compatibility only.
+    Kept for backwards compatibility (CI tests).
     """
-    logger.warning(
-        "check-all called — deprecated endpoint. "
-        "Use /api/trigger-manual-check instead."
-    )
-    return jsonify({
-        "error": "Deprecated. Use /api/trigger-manual-check instead.",
-        "hint":  "POST /api/trigger-manual-check triggers GitHub Actions workflow.",
-    }), 410
+    from pulse.checker import check_all_services
 
+    if is_check_running():
+        logger.info("check-all: already running — returning 409")
+        return jsonify({
+            "message":       "Check already in progress.",
+            "check_running": True,
+        }), 409
+
+    threading.Thread(
+        target=check_all_services, daemon=True, name="manual-check-all-thread"
+    ).start()
+
+    logger.warning(
+        "check-all called (legacy) — may hit rate limit. "
+        "Use /api/trigger-manual-check for production."
+    )
+
+    with state.services_lock:
+        services_data = [svc.copy() for svc in state.services]
+
+    return jsonify({
+        "message":        "Health checks started in background.",
+        "services":       services_data,
+        "overall_status": get_overall_status(),
+        "check_running":  True,
+    }), 202
 
 # ── POST /api/wake-and-check ─────────────────────────────────────────────────
 
