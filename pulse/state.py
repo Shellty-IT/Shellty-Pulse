@@ -11,7 +11,6 @@ Import pattern (always use module-level access):
 """
 from __future__ import annotations
 
-import os
 import threading
 
 from pulse.config import (
@@ -30,7 +29,7 @@ services: list[dict] = []
 
 # ── Runtime settings (always access under services_lock) ─────────────────────
 ping_interval: int = PING_INTERVAL_DEFAULT
-auto_ping_enabled: bool = os.environ.get("AUTO_PING_ENABLED", "false").lower() == "true"
+auto_ping_enabled: bool = False
 last_check_time: str | None = None
 
 # ── Business Hours settings ──────────────────────────────────────────────────
