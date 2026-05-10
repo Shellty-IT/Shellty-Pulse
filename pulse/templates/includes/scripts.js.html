@@ -2,7 +2,7 @@
 // ── Stałe ────────────────────────────────────────────────────────────────────
 var POLL_IDLE        = 30000;   // poll co 30s gdy brak checku
 var POLL_ACTIVE      = 4000;    // poll co 4s gdy check trwa
-var COLD_START_WAIT  = 60;     // GitHub Actions Phase 2 sleep (120s)
+var COLD_START_WAIT  = 60;     // GitHub Actions Phase 2 sleep (60s)
 
 var STATUS_CONFIG = {
     checking:    { icon: '🔵', label: 'Checking Services…'      },
@@ -62,7 +62,7 @@ function _applyRunningState(running) {
 }
 
 // ── Countdown (Faza 1/2/3) ────────────────────────────────────────────────────
-function _startCountdown() {
+ffunction _startCountdown() {
     _stopCountdown();
     if (!_checkStartedAt) _checkStartedAt = Date.now();
 
@@ -70,16 +70,13 @@ function _startCountdown() {
         var elapsed   = (Date.now() - _checkStartedAt) / 1000;
         var phase     = document.getElementById('banner-phase');
         var countdown = document.getElementById('banner-countdown');
+        var remaining = Math.max(0, Math.ceil(COLD_START_WAIT - elapsed));
 
-        if (elapsed < 8) {
-            phase.textContent     = 'Phase 1 — waking all services…';
-            countdown.textContent = '';
-        } else if (elapsed < COLD_START_WAIT + 8) {
-            var remaining = Math.max(0, Math.ceil(COLD_START_WAIT - (elapsed - 8)));
-            phase.textContent     = 'Phase 2 — waiting for cold starts…';
+        if (remaining > 0) {
+            phase.textContent     = 'GitHub Actions — waking all services…';
             countdown.textContent = '(' + remaining + 's remaining)';
         } else {
-            phase.textContent     = 'Phase 3 — verifying all services…';
+            phase.textContent     = 'Verifying services…';
             countdown.textContent = '';
         }
     }
