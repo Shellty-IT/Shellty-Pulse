@@ -152,7 +152,7 @@ async function checkAll() {
             document.getElementById('check-banner').classList.add('visible');
             _startCountdown();
 
-            var timeLeft = 120;
+            var timeLeft = 60;
             var countdownInterval = setInterval(function() {
                 timeLeft--;
                 var minutes = Math.floor(timeLeft / 60);
@@ -197,7 +197,7 @@ async function checkAll() {
                 console.log('✅ All services refreshed');
                 await fetchServices();
 
-            }, 120000);
+            }, 60000);
 
         } else {
             alert('❌ Failed:\n' + (data.error || 'Unknown error'));
