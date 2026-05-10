@@ -153,16 +153,18 @@ async function checkAll() {
             _startCountdown();
 
             var timeLeft = 60;
-            var countdownInterval = setInterval(function() {
-                timeLeft--;
-                var minutes = Math.floor(timeLeft / 60);
-                var seconds = timeLeft % 60;
-                btn.textContent = '⏳ ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+var countdownInterval = setInterval(function() {
+    timeLeft--;
+    var minutes = Math.floor(timeLeft / 60);
+    var seconds = timeLeft % 60;
+    btn.textContent = '⏳ ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
 
-                if (timeLeft <= 0) {
-                    clearInterval(countdownInterval);
-                }
-            }, 1000);
+    if (timeLeft <= 0) {
+        clearInterval(countdownInterval);
+        btn.textContent = '⟳ Check All Now';
+        btn.disabled = false;
+    }
+}, 1000);
 
             setTimeout(async function() {
                 console.log('✅ GitHub Actions completed — refreshing statuses...');
