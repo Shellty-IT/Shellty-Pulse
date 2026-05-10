@@ -8,6 +8,7 @@ Changes vs previous version:
 - Fixed _check_lock import (use checker_mod namespace instead of direct import)
 - Added /api/trigger-manual-check endpoint (triggers GitHub Actions workflow)
 - Deprecated /api/check-all (returns 410 Gone)
+- AUTO_PING_ENABLED now synced to GitHub Variables (persists across cold starts)
 """
 from __future__ import annotations
 
@@ -90,6 +91,52 @@ def _sync_business_hours_to_github(enabled: bool, start: int, end: int) -> bool:
                 )
                 return False
         return True
+    except Exception as exc:
+        logger.error("GitHub sync exception: %s", exc)
+        return False
+
+
+def _sync_auto_ping_to_github(enabled: bool) -> bool:
+    """
+    Push auto_ping_enabled setting to GitHub Actions Variables.
+    Returns True on success, False on error.
+    """
+    if not _GITHUB_TOKEN or not _GITHUB_REPO:
+        logger.warning("GitHub sync skipped: GITHUB_TOKEN or GITHUB_REPO not set.")
+        return False
+
+    base = f"https://api.github.com/repos/{_GITHUB_REPO}/actions/variables"
+    headers = {
+        "Authorization":        f"Bearer {_GITHUB_TOKEN}",
+        "Accept":               "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    name  = "AUTO_PING_ENABLED"
+    value = "true" if enabled else "false"
+    url   = f"{base}/{name}"
+
+    try:
+        resp = http_requests.patch(
+            url, headers=headers,
+            json={"name": name, "value": value}, timeout=10,
+        )
+        if resp.status_code == 404:
+            # Variable nie istnieje → stwórz
+            resp = http_requests.post(
+                base, headers=headers,
+                json={"name": name, "value": value}, timeout=10,
+            )
+        if resp.status_code not in (200, 201, 204):
+            logger.error(
+                "GitHub sync failed for %s: HTTP %d — %s",
+                name, resp.status_code, resp.text[:200],
+            )
+            return False
+
+        logger.info("✅ Synced AUTO_PING_ENABLED=%s to GitHub", value)
+        return True
+
     except Exception as exc:
         logger.error("GitHub sync exception: %s", exc)
         return False
@@ -248,7 +295,7 @@ def verify_all_route():
     }), 202
 
 
-## ── POST /api/check-all ──────────────────────────────────────────────────────
+# ── POST /api/check-all ──────────────────────────────────────────────────────
 
 @api_bp.post("/check-all")
 def check_all_route():
@@ -285,80 +332,62 @@ def check_all_route():
         "check_running":  True,
     }), 202
 
+
 # ── POST /api/wake-and-check ─────────────────────────────────────────────────
 
 @api_bp.post("/wake-and-check")
 def wake_and_check_route():
-    """Called by GitHub Actions to wake Shellty Pulse."""
+    """
+    Called by GitHub Actions during business hours.
+    Checks if auto_ping_enabled (from env/GitHub Variable) is ON.
+    If ON → triggers service checks.
+    If OFF → skips (saves resources).
+    """
     if _WAKE_SECRET:
         if request.headers.get("X-Wake-Secret", "") != _WAKE_SECRET:
             logger.warning("wake-and-check: invalid or missing X-Wake-Secret")
             return jsonify({"error": "Unauthorized"}), 401
 
     with state.services_lock:
-        auto_ping     = state.auto_ping_enabled
-        ping_interval = state.ping_interval
-        last_check    = state.last_check_time
-
-    now          = datetime.now(timezone.utc)
-    should_check = False
-    skip_reason  = ""
+        auto_ping = state.auto_ping_enabled
 
     if not auto_ping:
-        skip_reason = "auto_ping disabled"
-    else:
-        if last_check is None:
-            should_check = True
-        else:
-            try:
-                last_dt = datetime.fromisoformat(last_check)
-                elapsed = (now - last_dt).total_seconds()
-                if elapsed >= ping_interval:
-                    should_check = True
-                else:
-                    remaining   = int(ping_interval - elapsed)
-                    skip_reason = (
-                        f"too soon — {int(elapsed)}s elapsed, "
-                        f"need {ping_interval}s, next check in ~{remaining}s"
-                    )
-            except (ValueError, TypeError):
-                should_check = True
-
-    if should_check:
-        from pulse.checker import check_all_services
-        if is_check_running():
-            return jsonify({
-                "status":       "ok",
-                "awake":        True,
-                "checking":     True,
-                "triggered_by": "github-actions",
-                "message":      "Skipped: check already running.",
-                "auto_ping":    auto_ping,
-                "ping_interval": ping_interval,
-            }), 200
-
-        threading.Thread(
-            target=check_all_services, daemon=True, name="wake-and-check-thread"
-        ).start()
-
+        logger.info("wake-and-check: auto_ping is OFF — skipping service checks")
         return jsonify({
-            "status":        "ok",
-            "awake":         True,
-            "checking":      True,
-            "triggered_by":  "github-actions",
-            "message":       "Service checks started in background.",
-            "auto_ping":     auto_ping,
-            "ping_interval": ping_interval,
+            "status":       "ok",
+            "awake":        True,
+            "checking":     False,
+            "triggered_by": "github-actions",
+            "message":      "Skipped: auto_ping is disabled.",
+            "auto_ping":    False,
         }), 200
 
+    from pulse.checker import check_all_services
+
+    if is_check_running():
+        logger.info("wake-and-check: check already running — skipping")
+        return jsonify({
+            "status":       "ok",
+            "awake":        True,
+            "checking":     True,
+            "triggered_by": "github-actions",
+            "message":      "Skipped: check already running.",
+            "auto_ping":    True,
+        }), 200
+
+    logger.info("wake-and-check: starting service checks (auto_ping=ON)")
+
+    threading.Thread(
+        target=check_all_services, daemon=True, name="wake-and-check-thread"
+    ).start()
+
     return jsonify({
-        "status":        "ok",
-        "awake":         True,
-        "checking":      False,
-        "triggered_by":  "github-actions",
-        "message":       f"Skipped: {skip_reason}",
-        "auto_ping":     auto_ping,
-        "ping_interval": ping_interval,
+        "status":       "ok",
+        "awake":        True,
+        "checking":     True,
+        "triggered_by": "github-actions",
+        "message":      "Service checks started.",
+        "auto_ping":    True,
     }), 200
 
 
@@ -366,12 +395,22 @@ def wake_and_check_route():
 
 @api_bp.post("/toggle-auto-ping")
 def toggle_auto_ping_route():
-    """Toggle automatic periodic health checking on / off."""
+    """Toggle automatic periodic health checking on / off and sync to GitHub."""
     with state.services_lock:
         state.auto_ping_enabled = not state.auto_ping_enabled
         new_state = state.auto_ping_enabled
+
     label = "enabled" if new_state else "disabled"
     logger.info("Auto-ping toggled: %s", label)
+
+    # Synkuj do GitHub Variables
+    threading.Thread(
+        target=_sync_auto_ping_to_github,
+        args=(new_state,),
+        daemon=True,
+        name="github-sync-autoping",
+    ).start()
+
     return jsonify({
         "auto_ping_enabled": new_state,
         "message":           f"Auto-ping {label}.",
@@ -447,7 +486,7 @@ def trigger_manual_check_route():
             logger.info("✅ GitHub Actions workflow triggered successfully")
             return jsonify({
                 "status":   "triggered",
-                "message":  "GitHub Actions started. Services will be checked in ~2.5 min.",
+                "message":  "GitHub Actions started. Services will be checked in ~2 min.",
                 "workflow": workflow_file,
             }), 202
 
