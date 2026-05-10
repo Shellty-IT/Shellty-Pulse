@@ -143,7 +143,7 @@ async function checkAll() {
 
             _applyRunningState(true);
 
-            var timeLeft = 120; // 120 sekund = 2.0 min
+            var timeLeft = 60; // 60 sekund = 1.0 min
             var countdownInterval = setInterval(function() {
                 timeLeft--;
                 var minutes = Math.floor(timeLeft / 60);
@@ -188,7 +188,7 @@ async function checkAll() {
 
                 await fetchServices();
 
-            }, 120000); // 120000ms = 2.0 min
+            }, 60000); // 60000ms = 2.0 min
 
         } else {
             alert('❌ Failed to trigger check:\n' + (data.error || 'Unknown error'));
