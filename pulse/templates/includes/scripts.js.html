@@ -2,7 +2,7 @@
 // ── Stałe ────────────────────────────────────────────────────────────────────
 var POLL_IDLE        = 30000;   // poll co 30s gdy brak checku
 var POLL_ACTIVE      = 4000;    // poll co 4s gdy check trwa
-var COLD_START_WAIT  = 60;     // GitHub Actions Phase 2 sleep (60s)
+var COLD_START_WAIT  = 60;      // czas odliczania (60s)
 
 var STATUS_CONFIG = {
     checking:    { icon: '🔵', label: 'Checking Services…'      },
@@ -14,12 +14,13 @@ var STATUS_CONFIG = {
 };
 
 // ── Stan lokalny ─────────────────────────────────────────────────────────────
-var _pollTimer         = null;
-var _countdownTimer    = null;
-var _checkStartedAt    = null;
-var _wasRunning        = false;
+var _pollTimer           = null;
+var _countdownTimer      = null;
+var _checkStartedAt      = null;
+var _wasRunning          = false;
 var _initialLoadAttempts = 0;
-var _maxInitialRetries = 10;
+var _maxInitialRetries   = 10;
+var _countdownInterval   = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function getStatusConfig(s) { return STATUS_CONFIG[s] || STATUS_CONFIG.unknown; }
@@ -42,51 +43,19 @@ function _applyRunningState(running) {
     var banner = document.getElementById('check-banner');
 
     if (running) {
-        // Jeśli przycisk już pokazuje countdown → nie zmieniaj
         if (btn.textContent.startsWith('⏳')) {
             return;
         }
-
         btn.disabled    = true;
         btn.textContent = '⟳ Checking…';
         banner.classList.add('visible');
-        _startCountdown();
         _setPolling(POLL_ACTIVE);
     } else {
         btn.disabled    = false;
         btn.textContent = '⟳ Check All Now';
         banner.classList.remove('visible');
-        _stopCountdown();
         _setPolling(POLL_IDLE);
     }
-}
-
-// ── Countdown (Faza 1/2/3) ────────────────────────────────────────────────────
-ffunction _startCountdown() {
-    _stopCountdown();
-    if (!_checkStartedAt) _checkStartedAt = Date.now();
-
-    function tick() {
-        var elapsed   = (Date.now() - _checkStartedAt) / 1000;
-        var phase     = document.getElementById('banner-phase');
-        var countdown = document.getElementById('banner-countdown');
-        var remaining = Math.max(0, Math.ceil(COLD_START_WAIT - elapsed));
-
-        if (remaining > 0) {
-            phase.textContent     = 'GitHub Actions — waking all services…';
-            countdown.textContent = '(' + remaining + 's remaining)';
-        } else {
-            phase.textContent     = 'Verifying services…';
-            countdown.textContent = '';
-        }
-    }
-
-    tick();
-    _countdownTimer = setInterval(tick, 1000);
-}
-
-function _stopCountdown() {
-    if (_countdownTimer) { clearInterval(_countdownTimer); _countdownTimer = null; }
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -95,27 +64,20 @@ async function fetchServices() {
         var res  = await fetch('/api/services');
         var data = await res.json();
 
-        // Retry tylko jeśli lista pusta I total_services = 0
         if (_initialLoadAttempts < _maxInitialRetries &&
             data.services.length === 0 &&
             data.meta.total_services === 0) {
 
             _initialLoadAttempts++;
             var delay = Math.min(1000 * _initialLoadAttempts, 5000);
-
-            console.log(
-                `⏳ Services not loaded yet (attempt ${_initialLoadAttempts}/${_maxInitialRetries}), ` +
-                `retrying in ${delay}ms...`
-            );
-
+            console.log('⏳ Services not loaded yet (attempt ' + _initialLoadAttempts + '/' + _maxInitialRetries + '), retrying in ' + delay + 'ms...');
             setTimeout(fetchServices, delay);
             return;
         }
 
-        // Serwisy załadowane
         if (data.services.length > 0) {
             _initialLoadAttempts = _maxInitialRetries;
-            console.log(`✅ Services loaded: ${data.services.length}`);
+            console.log('✅ Services loaded: ' + data.services.length);
         }
 
         renderDashboard(data);
@@ -126,7 +88,7 @@ async function fetchServices() {
         if (_initialLoadAttempts < _maxInitialRetries) {
             _initialLoadAttempts++;
             var delay = Math.min(2000 * _initialLoadAttempts, 10000);
-            console.log(`❌ Fetch error, retrying in ${delay}ms...`);
+            console.log('❌ Fetch error, retrying in ' + delay + 'ms...');
             setTimeout(fetchServices, delay);
         }
     }
@@ -144,50 +106,40 @@ async function checkAll() {
         var data = await res.json();
 
         if (res.ok) {
-            _checkStartedAt = Date.now();
+            var timeLeft = COLD_START_WAIT;
+            if (_countdownInterval) clearInterval(_countdownInterval);
 
-            document.getElementById('check-banner').classList.add('visible');
-            _startCountdown();
+            _countdownInterval = setInterval(function() {
+                timeLeft--;
+                var minutes = Math.floor(timeLeft / 60);
+                var seconds = timeLeft % 60;
+                btn.textContent = '⏳ ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
 
-            var timeLeft = 60;
-var countdownInterval = setInterval(function() {
-    timeLeft--;
-    var minutes = Math.floor(timeLeft / 60);
-    var seconds = timeLeft % 60;
-    btn.textContent = '⏳ ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
-
-    if (timeLeft <= 0) {
-        clearInterval(countdownInterval);
-        btn.textContent = '⟳ Check All Now';
-        btn.disabled = false;
-    }
-}, 1000);
+                if (timeLeft <= 0) {
+                    clearInterval(_countdownInterval);
+                    _countdownInterval = null;
+                    btn.textContent = '⟳ Check All Now';
+                    btn.disabled    = false;
+                }
+            }, 1000);
 
             setTimeout(async function() {
-                console.log('✅ GitHub Actions completed — refreshing statuses...');
+                console.log('✅ Countdown complete — refreshing statuses...');
 
-                document.getElementById('check-banner').classList.remove('visible');
-                _stopCountdown();
-                _checkStartedAt = null;
-                btn.textContent = '⟳ Check All Now';
-                btn.disabled = false;
-
-                var servicesRes = await fetch('/api/services');
+                var servicesRes  = await fetch('/api/services');
                 var servicesData = await servicesRes.json();
-                var services = servicesData.services;
+                var services     = servicesData.services;
 
-                console.log(`Checking ${services.length} services individually...`);
+                console.log('Checking ' + services.length + ' services individually...');
 
                 for (var i = 0; i < services.length; i++) {
                     var svc = services[i];
-                    console.log(`  Checking ${svc.name}...`);
-
+                    console.log('  Checking ' + svc.name + '...');
                     try {
                         await fetch('/api/services/' + svc.id + '/check', { method: 'POST' });
                     } catch (err) {
-                        console.error(`  Failed: ${svc.name}`, err);
+                        console.error('  Failed: ' + svc.name, err);
                     }
-
                     if (i < services.length - 1) {
                         await new Promise(r => setTimeout(r, 500));
                     }
@@ -196,7 +148,7 @@ var countdownInterval = setInterval(function() {
                 console.log('✅ All services refreshed');
                 await fetchServices();
 
-            }, 60000);
+            }, COLD_START_WAIT * 1000);
 
         } else {
             alert('❌ Failed:\n' + (data.error || 'Unknown error'));
@@ -250,8 +202,8 @@ async function addService() {
             body: JSON.stringify(payload)
         });
         if (res.ok) {
-            document.getElementById('new-name').value = '';
-            document.getElementById('new-url').value  = '';
+            document.getElementById('new-name').value         = '';
+            document.getElementById('new-url').value          = '';
             document.getElementById('new-frontend-url').value = '';
             await fetchServices();
         } else { var e = await res.json(); alert(e.error || 'Failed.'); }
@@ -269,7 +221,7 @@ function adjustHour(elementId, delta) {
     var val  = parseInt(elem.textContent);
     if (isNaN(val)) val = 9;
     val += delta;
-    if (val < 0) val = 23;
+    if (val < 0)  val = 23;
     if (val > 23) val = 0;
     elem.textContent = val;
 }
@@ -302,7 +254,6 @@ function renderDashboard(data) {
     oel.textContent = ocfg.icon + ' ' + ocfg.label;
 
     var running = meta.check_running;
-
     if (running && !_wasRunning) {
         if (!_checkStartedAt) _checkStartedAt = Date.now();
     }
@@ -311,7 +262,6 @@ function renderDashboard(data) {
     }
     _wasRunning = running;
 
-    // Aplikuj stan TYLKO jeśli przycisk nie pokazuje countdown
     var btn = document.getElementById('check-all-btn');
     if (!btn.textContent.startsWith('⏳')) {
         _applyRunningState(running);
@@ -321,10 +271,10 @@ function renderDashboard(data) {
     if (meta.auto_ping_enabled) { apb.className = 'btn active';   apb.textContent = '⏱ Auto-Ping: ON';  }
     else                        { apb.className = 'btn inactive'; apb.textContent = '⏱ Auto-Ping: OFF'; }
 
-    document.querySelectorAll('.interval-btn').forEach(function(btn) {
-        var val = parseInt(btn.getAttribute('data-interval'));
-        btn.classList.toggle('active', val === meta.ping_interval);
-        btn.disabled = !meta.auto_ping_enabled;
+    document.querySelectorAll('.interval-btn').forEach(function(b) {
+        var val = parseInt(b.getAttribute('data-interval'));
+        b.classList.toggle('active', val === meta.ping_interval);
+        b.disabled = !meta.auto_ping_enabled;
     });
 
     var ci = document.getElementById('check-info');
@@ -356,10 +306,10 @@ function renderDashboard(data) {
         }
     } else {
         grid.innerHTML = services.map(function(svc) {
-            var cfg     = getStatusConfig(svc.status);
-            var upPct   = svc.uptime_percent !== null ? svc.uptime_percent.toFixed(1) : '—';
-            var upColor = svc.uptime_percent !== null ? uptimeColor(svc.uptime_percent) : '#484f58';
-            var upWidth = svc.uptime_percent !== null ? svc.uptime_percent : 0;
+            var cfg      = getStatusConfig(svc.status);
+            var upPct    = svc.uptime_percent !== null ? svc.uptime_percent.toFixed(1) : '—';
+            var upColor  = svc.uptime_percent !== null ? uptimeColor(svc.uptime_percent) : '#484f58';
+            var upWidth  = svc.uptime_percent !== null ? svc.uptime_percent : 0;
             var nameHtml = svc.frontend_url
                 ? '<a href="' + escapeHtml(svc.frontend_url) + '" target="_blank" rel="noopener noreferrer">'
                   + escapeHtml(svc.name) + ' <span class="link-arrow">↗</span></a>'
@@ -386,6 +336,7 @@ function renderDashboard(data) {
         }).join('');
     }
 
+    // Business hours
     var bhEnabled = meta.business_hours_enabled;
     var bhBadge   = document.getElementById('bh-badge');
     var bhToggle  = document.getElementById('bh-toggle-btn');
