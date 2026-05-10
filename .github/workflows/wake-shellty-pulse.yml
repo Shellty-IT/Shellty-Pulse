@@ -55,31 +55,24 @@ jobs:
             exit 0
           fi
 
-          # Pobierz aktualny czas w minutach od północy (CET/CEST)
           current_hour=$(TZ='Europe/Warsaw' date +%-H)
           current_min=$(TZ='Europe/Warsaw' date +%-M)
           current_total=$((current_hour * 60 + current_min))
 
-          # Okno w minutach od północy
           window_start=$((BH_START * 60))
-          # Bufor 15 minut na końcu — kompensacja opóźnień GitHub Actions
           window_end=$((BH_END * 60 + 15))
 
           echo "Current time (CET/CEST): ${current_hour}:$(printf '%02d' $current_min) (${current_total} min)"
           echo "Business hours         : ${BH_START}:00 – ${BH_END}:00 (+ 15 min buffer)"
           echo "Window                 : ${window_start} – ${window_end} min"
 
-          # Obsługa okien przez północ (BH_START > BH_END)
           if [ "$BH_START" -lt "$BH_END" ]; then
-            # Normalne okno np. 21:00–23:00
             if [ "$current_total" -ge "$window_start" ] && [ "$current_total" -lt "$window_end" ]; then
               IN_WINDOW=true
             else
               IN_WINDOW=false
             fi
           else
-            # Okno przez północ np. 23:00–01:00
-            # window_end może przekroczyć 1440 (24*60) — obsłuż modulo
             if [ "$current_total" -ge "$window_start" ] || [ "$current_total" -lt "$window_end" ]; then
               IN_WINDOW=true
             else
@@ -139,8 +132,8 @@ jobs:
       - name: ⏳ Phase 2 — Wait for cold starts
         if: steps.check-time.outputs.should_wake == 'true'
         run: |
-          echo "⏳ Waiting 60 seconds for Render cold starts..."
-          sleep 60
+          echo "⏳ Waiting 90 seconds for Render cold starts..."
+          sleep 90
           echo "✅ Cold start window complete"
 
       - name: ✔️ Phase 3 — Verify all services + update Pulse
@@ -171,7 +164,7 @@ jobs:
               print(f'  ✔️  Checking: {name}')
               try:
                   result = subprocess.run(
-                      ['curl', '-sf', '--max-time', '30', '-o', '/dev/null',
+                      ['curl', '-sf', '--max-time', '60', '-o', '/dev/null',
                        '-w', '%{http_code}', url],
                       capture_output=True, text=True
                   )
