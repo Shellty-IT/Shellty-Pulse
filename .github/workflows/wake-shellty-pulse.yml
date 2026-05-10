@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   wake:
@@ -56,8 +57,8 @@ jobs:
           fi
 
           current_hour=$(TZ='Europe/Warsaw' date +%-H)
-          echo "Current hour (CET): $current_hour"
-          echo "Business hours    : ${BH_START}:00 – ${BH_END}:00 CET"
+          echo "Current hour (CET/CEST): $current_hour"
+          echo "Business hours         : ${BH_START}:00 – ${BH_END}:00"
 
           if [ "$current_hour" -ge "$BH_START" ] && [ "$current_hour" -lt "$BH_END" ]; then
             echo "✅ Within business hours — will wake"
@@ -67,13 +68,24 @@ jobs:
             echo "should_wake=false" >> $GITHUB_OUTPUT
           fi
 
-      # ── Phase 1: Wake Shellty Pulse + Fire all services ─────────────────────
-      - name: 🔥 Phase 1 — Fire all services
+      # ── Phase 1: Obudź Shellty Pulse + kick cold starts ──────────────────────
+      - name: 🔥 Phase 1 — Wake Pulse + Fire all services
         if: steps.check-time.outputs.should_wake == 'true'
         run: |
           echo "🔔 Waking Shellty Pulse..."
-          curl -sf --max-time 30 "$APP_URL/health" > /dev/null 2>&1 || echo "(Pulse was sleeping — waking)"
+          curl -sf --max-time 30 "$APP_URL/health" > /dev/null 2>&1 \
+            && echo "✅ Shellty Pulse is awake" \
+            || echo "⚠️ Pulse was sleeping — waking up"
 
+          echo ""
+          echo "🔔 Calling /api/wake-and-check to update service statuses..."
+          WAKE_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            -X POST "$APP_URL/api/wake-and-check" \
+            -H "Content-Type: application/json")
+          echo "   /api/wake-and-check response: HTTP $WAKE_RESP"
+
+          echo ""
           echo "🔥 Fetching service list from Shellty Pulse..."
           SERVICES_JSON=$(curl -sf --max-time 30 "$APP_URL/api/services" || echo "")
 
@@ -92,12 +104,13 @@ jobs:
               print(svc['url'])
           " | tail -n +2 | while read -r url; do
             echo "  🔥 Firing: $url"
-            curl -sf --max-time 10 "$url" > /dev/null 2>&1 || echo "     (no response yet — cold start kicked)"
+            curl -sf --max-time 10 "$url" > /dev/null 2>&1 \
+              || echo "     (no response yet — cold start kicked)"
           done
 
-          echo "✅ All fire requests sent"
+          echo "✅ Phase 1 complete"
 
-      # ── Phase 2: Wait for cold starts ────────────────────────────────────────
+      # ── Phase 2: Czekaj na cold starts ───────────────────────────────────────
       - name: ⏳ Phase 2 — Wait for cold starts
         if: steps.check-time.outputs.should_wake == 'true'
         run: |
@@ -105,8 +118,8 @@ jobs:
           sleep 120
           echo "✅ Cold start window complete"
 
-      # ── Phase 3: Verify all services ─────────────────────────────────────────
-      - name: ✔️ Phase 3 — Verify all services
+      # ── Phase 3: Weryfikuj serwisy + zaktualizuj Pulse ───────────────────────
+      - name: ✔️ Phase 3 — Verify all services + update Pulse
         if: steps.check-time.outputs.should_wake == 'true'
         run: |
           echo "✔️ Verifying all services..."
@@ -153,7 +166,15 @@ jobs:
           print(f'Results: {success} OK, {failed} failed')
           "
 
-          echo "✅ Verification complete"
+          echo ""
+          echo "🔔 Calling /api/wake-and-check again to update final statuses in Pulse..."
+          WAKE_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            -X POST "$APP_URL/api/wake-and-check" \
+            -H "Content-Type: application/json")
+          echo "   /api/wake-and-check response: HTTP $WAKE_RESP"
+
+          echo "✅ Phase 3 complete"
 
       - name: Summary
         if: always()
