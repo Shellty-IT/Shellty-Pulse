@@ -8,6 +8,7 @@ Changes vs previous version:
 - Fixed _check_lock import (use checker_mod namespace instead of direct import)
 - Added /api/trigger-manual-check endpoint (triggers GitHub Actions workflow)
 - /api/wake-and-check now always wakes services (business hours = unconditional)
+- Business hours now support overnight windows (e.g. 23:00–01:00)
 """
 from __future__ import annotations
 
@@ -433,7 +434,11 @@ def trigger_manual_check_route():
 
 @api_bp.post("/business-hours")
 def set_business_hours_route():
-    """Configure business hours and sync to GitHub Variables."""
+    """
+    Configure business hours and sync to GitHub Variables.
+    Supports overnight windows (e.g. start=23, end=1 means 23:00–01:00).
+    When start > end, the window crosses midnight.
+    """
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "Request body must be valid JSON."}), 400
@@ -451,9 +456,11 @@ def set_business_hours_route():
     if not (0 <= start <= 23) or not (0 <= end <= 23):
         return jsonify({"error": "'start' and 'end' must be between 0 and 23."}), 400
 
-    if start >= end:
-        return jsonify({"error": "'start' must be less than 'end'."}), 400
+    # start == end means zero-length window — nonsensical
+    if start == end:
+        return jsonify({"error": "'start' and 'end' must be different hours."}), 400
 
+    # Overnight windows (start > end) are valid: e.g. 23:00–01:00
     with state.services_lock:
         state.business_hours_enabled = enabled
         state.business_hours_start   = start
@@ -466,7 +473,12 @@ def set_business_hours_route():
         name="github-sync",
     ).start()
 
-    label        = f"{start:02d}:00 – {end:02d}:00 CET"
+    # Label — pokazuj intuicyjnie
+    if start < end:
+        label = f"{start:02d}:00 – {end:02d}:00 CET"
+    else:
+        label = f"{start:02d}:00 – {end:02d}:00 CET (+1d)"
+
     status_label = "enabled" if enabled else "disabled"
     logger.info("Business hours %s: %s", status_label, label if enabled else "—")
 

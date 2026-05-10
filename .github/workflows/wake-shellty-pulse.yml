@@ -29,7 +29,6 @@ jobs:
         run: |
           MANUAL="${{ github.event.inputs.manual_trigger }}"
 
-          # Manual trigger z dashboardu — pomija business hours
           if [ "$MANUAL" = "true" ]; then
             echo "🔵 Manual trigger — bypassing business hours"
             echo "should_wake=true" >> $GITHUB_OUTPUT
@@ -60,7 +59,25 @@ jobs:
           echo "Current hour (CET/CEST): $current_hour"
           echo "Business hours         : ${BH_START}:00 – ${BH_END}:00"
 
-          if [ "$current_hour" -ge "$BH_START" ] && [ "$current_hour" -lt "$BH_END" ]; then
+          # Obsługa okien przez północ (BH_START > BH_END)
+          # np. BH_START=23, BH_END=1 → aktywne 23:00–00:59
+          if [ "$BH_START" -lt "$BH_END" ]; then
+            # Normalne okno: np. 21:00–23:00
+            if [ "$current_hour" -ge "$BH_START" ] && [ "$current_hour" -lt "$BH_END" ]; then
+              IN_WINDOW=true
+            else
+              IN_WINDOW=false
+            fi
+          else
+            # Okno przez północ: np. 23:00–01:00
+            if [ "$current_hour" -ge "$BH_START" ] || [ "$current_hour" -lt "$BH_END" ]; then
+              IN_WINDOW=true
+            else
+              IN_WINDOW=false
+            fi
+          fi
+
+          if [ "$IN_WINDOW" = "true" ]; then
             echo "✅ Within business hours — will wake"
             echo "should_wake=true" >> $GITHUB_OUTPUT
           else
@@ -68,7 +85,6 @@ jobs:
             echo "should_wake=false" >> $GITHUB_OUTPUT
           fi
 
-      # ── Phase 1: Obudź Shellty Pulse + kick cold starts ──────────────────────
       - name: 🔥 Phase 1 — Wake Pulse + Fire all services
         if: steps.check-time.outputs.should_wake == 'true'
         run: |
@@ -78,19 +94,19 @@ jobs:
             || echo "⚠️ Pulse was sleeping — waking up"
 
           echo ""
-          echo "🔔 Calling /api/wake-and-check to update service statuses..."
+          echo "🔔 Calling /api/wake-and-check..."
           WAKE_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 30 \
             -X POST "$APP_URL/api/wake-and-check" \
             -H "Content-Type: application/json")
-          echo "   /api/wake-and-check response: HTTP $WAKE_RESP"
+          echo "   /api/wake-and-check → HTTP $WAKE_RESP"
 
           echo ""
-          echo "🔥 Fetching service list from Shellty Pulse..."
+          echo "🔥 Fetching service list..."
           SERVICES_JSON=$(curl -sf --max-time 30 "$APP_URL/api/services" || echo "")
 
           if [ -z "$SERVICES_JSON" ]; then
-            echo "❌ Failed to fetch service list from Shellty Pulse"
+            echo "❌ Failed to fetch service list"
             exit 1
           fi
 
@@ -110,7 +126,6 @@ jobs:
 
           echo "✅ Phase 1 complete"
 
-      # ── Phase 2: Czekaj na cold starts ───────────────────────────────────────
       - name: ⏳ Phase 2 — Wait for cold starts
         if: steps.check-time.outputs.should_wake == 'true'
         run: |
@@ -118,7 +133,6 @@ jobs:
           sleep 120
           echo "✅ Cold start window complete"
 
-      # ── Phase 3: Weryfikuj serwisy + zaktualizuj Pulse ───────────────────────
       - name: ✔️ Phase 3 — Verify all services + update Pulse
         if: steps.check-time.outputs.should_wake == 'true'
         run: |
@@ -167,12 +181,12 @@ jobs:
           "
 
           echo ""
-          echo "🔔 Calling /api/wake-and-check again to update final statuses in Pulse..."
+          echo "🔔 Final wake-and-check to update statuses in Pulse..."
           WAKE_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 30 \
             -X POST "$APP_URL/api/wake-and-check" \
             -H "Content-Type: application/json")
-          echo "   /api/wake-and-check response: HTTP $WAKE_RESP"
+          echo "   /api/wake-and-check → HTTP $WAKE_RESP"
 
           echo "✅ Phase 3 complete"
 

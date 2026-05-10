@@ -18,8 +18,10 @@ var _pollTimer           = null;
 var _countdownTimer      = null;
 var _checkStartedAt      = null;
 var _wasRunning          = false;
+var _initialLoadDone     = false;   // true gdy serwisy załadowane po raz pierwszy
 var _initialLoadAttempts = 0;
-var _maxInitialRetries   = 10;
+var _maxInitialRetries   = 15;      // więcej prób przy cold start
+var _retryTimer          = null;    // aktywny timer retry (zapobiega duplikatom)
 var _countdownInterval   = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -60,23 +62,40 @@ function _applyRunningState(running) {
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 async function fetchServices() {
+
     try {
         var res  = await fetch('/api/services');
         var data = await res.json();
 
-        if (_initialLoadAttempts < _maxInitialRetries &&
-            data.services.length === 0 &&
-            data.meta.total_services === 0) {
-
+        if (!_initialLoadDone && data.services.length === 0) {
             _initialLoadAttempts++;
-            var delay = Math.min(1000 * _initialLoadAttempts, 5000);
-            console.log('⏳ Services not loaded yet (attempt ' + _initialLoadAttempts + '/' + _maxInitialRetries + '), retrying in ' + delay + 'ms...');
-            setTimeout(fetchServices, delay);
-            return;
+            if (_initialLoadAttempts <= _maxInitialRetries) {
+                // Backoff: 2s, 4s, 6s... max 10s
+                var delay = Math.min(2000 * _initialLoadAttempts, 10000);
+                console.log(
+                    '⏳ Services not ready yet (attempt ' +
+                    _initialLoadAttempts + '/' + _maxInitialRetries +
+                    '), retry in ' + delay + 'ms...'
+                );
+                _scheduleRetry(delay);
+                var grid = document.getElementById('services-grid');
+                if (grid && grid.querySelector('.loading') === null) {
+                    grid.innerHTML = '<div class="loading">⏳ Loading services...</div>';
+                }
+                return;
+            } else {
+                console.warn('⚠️ Max retries reached — startup.sh may have failed');
+                _initialLoadDone = true;
+            }
         }
 
-        if (data.services.length > 0) {
-            _initialLoadAttempts = _maxInitialRetries;
+        if (!_initialLoadDone && data.services.length > 0) {
+            _initialLoadDone = true;
+            _initialLoadAttempts = 0;
+            if (_retryTimer) {
+                clearTimeout(_retryTimer);
+                _retryTimer = null;
+            }
             console.log('✅ Services loaded: ' + data.services.length);
         }
 
@@ -85,13 +104,24 @@ async function fetchServices() {
     } catch (err) {
         console.error('Fetch failed:', err);
 
-        if (_initialLoadAttempts < _maxInitialRetries) {
+        if (!_initialLoadDone && _initialLoadAttempts <= _maxInitialRetries) {
             _initialLoadAttempts++;
-            var delay = Math.min(2000 * _initialLoadAttempts, 10000);
-            console.log('❌ Fetch error, retrying in ' + delay + 'ms...');
-            setTimeout(fetchServices, delay);
+            var delay = Math.min(3000 * _initialLoadAttempts, 10000);
+            console.log('❌ Fetch error, retry in ' + delay + 'ms...');
+            _scheduleRetry(delay);
         }
     }
+}
+
+// Planuje retry bez duplikatów
+function _scheduleRetry(delay) {
+    if (_retryTimer) {
+        clearTimeout(_retryTimer);
+    }
+    _retryTimer = setTimeout(function() {
+        _retryTimer = null;
+        fetchServices();
+    }, delay);
 }
 
 async function checkAll() {
@@ -231,7 +261,17 @@ async function toggleBusinessHours() {
     var enabled = btn.classList.contains('enable');
     var start   = parseInt(document.getElementById('bh-start').textContent);
     var end     = parseInt(document.getElementById('bh-end').textContent);
-    if (isNaN(start) || isNaN(end) || start >= end) { alert('"From" must be less than "To" (0–23).'); return; }
+
+    if (isNaN(start) || isNaN(end)) {
+        alert('Invalid hour values.');
+        return;
+    }
+    if (start === end) {
+        alert('"From" and "To" must be different hours.');
+        return;
+    }
+
+
     try {
         var res = await fetch('/api/business-hours', {
             method: 'POST',
@@ -299,7 +339,7 @@ function renderDashboard(data) {
 
     var grid = document.getElementById('services-grid');
     if (services.length === 0) {
-        if (_initialLoadAttempts < _maxInitialRetries) {
+        if (!_initialLoadDone) {
             grid.innerHTML = '<div class="loading">⏳ Loading services...</div>';
         } else {
             grid.innerHTML = '<div class="loading">No services configured. Add one below.</div>';
@@ -336,15 +376,34 @@ function renderDashboard(data) {
         }).join('');
     }
 
-    // Business hours
+    // Business hours — aktualizuj tylko gdy użytkownik nie edytuje
+    // (sprawdzamy czy focus jest na elementach BH)
+    var bhStart = document.getElementById('bh-start');
+    var bhEnd   = document.getElementById('bh-end');
+    var userEditingBH = (
+        document.activeElement === bhStart ||
+        document.activeElement === bhEnd
+    );
+
+    if (!userEditingBH) {
+        bhStart.textContent = meta.business_hours_start;
+        bhEnd.textContent   = meta.business_hours_end;
+    }
+
     var bhEnabled = meta.business_hours_enabled;
     var bhBadge   = document.getElementById('bh-badge');
     var bhToggle  = document.getElementById('bh-toggle-btn');
-    document.getElementById('bh-start').textContent = meta.business_hours_start;
-    document.getElementById('bh-end').textContent   = meta.business_hours_end;
+
+    // Label okna — obsługa przez północ
+    var bhStartVal = meta.business_hours_start;
+    var bhEndVal   = meta.business_hours_end;
+    var bhLabel    = bhStartVal < bhEndVal
+        ? bhStartVal + ':00 – ' + bhEndVal + ':00 CET'
+        : bhStartVal + ':00 – ' + bhEndVal + ':00 CET (+1d)';
+
     if (bhEnabled) {
         bhBadge.className    = 'bh-badge on';
-        bhBadge.textContent  = '✅ ON · ' + meta.business_hours_start + ':00 – ' + meta.business_hours_end + ':00 CET';
+        bhBadge.textContent  = '✅ ON · ' + bhLabel;
         bhToggle.className   = 'btn-bh-toggle disable';
         bhToggle.textContent = 'Disable';
     } else {
