@@ -1,8 +1,8 @@
 <script>
 // ── Stałe ────────────────────────────────────────────────────────────────────
-var POLL_IDLE    = 30000;   // poll co 30s gdy brak checku
-var POLL_ACTIVE  = 4000;    // poll co 4s gdy check trwa
-var COLD_START_WAIT = 120;  // MUSI być równe GitHub Actions sleep (120s)
+var POLL_IDLE        = 30000;   // poll co 30s gdy brak checku
+var POLL_ACTIVE      = 4000;    // poll co 4s gdy check trwa
+var COLD_START_WAIT  = 120;     // GitHub Actions Phase 2 sleep (120s)
 
 var STATUS_CONFIG = {
     checking:    { icon: '🔵', label: 'Checking Services…'      },
@@ -14,10 +14,10 @@ var STATUS_CONFIG = {
 };
 
 // ── Stan lokalny ─────────────────────────────────────────────────────────────
-var _pollTimer      = null;
-var _countdownTimer = null;
-var _checkStartedAt = null;
-var _wasRunning     = false;
+var _pollTimer         = null;
+var _countdownTimer    = null;
+var _checkStartedAt    = null;
+var _wasRunning        = false;
 var _initialLoadAttempts = 0;
 var _maxInitialRetries = 10;
 
@@ -42,13 +42,18 @@ function _applyRunningState(running) {
     var banner = document.getElementById('check-banner');
 
     if (running) {
-        btn.disabled = true;
+        // Jeśli przycisk już pokazuje countdown → nie zmieniaj
+        if (btn.textContent.startsWith('⏳')) {
+            return;
+        }
+
+        btn.disabled    = true;
         btn.textContent = '⟳ Checking…';
         banner.classList.add('visible');
         _startCountdown();
         _setPolling(POLL_ACTIVE);
     } else {
-        btn.disabled = false;
+        btn.disabled    = false;
         btn.textContent = '⟳ Check All Now';
         banner.classList.remove('visible');
         _stopCountdown();
@@ -93,12 +98,13 @@ async function fetchServices() {
         var res  = await fetch('/api/services');
         var data = await res.json();
 
+        // Retry tylko jeśli lista pusta I total_services = 0
         if (_initialLoadAttempts < _maxInitialRetries &&
             data.services.length === 0 &&
             data.meta.total_services === 0) {
 
             _initialLoadAttempts++;
-            var delay = Math.min(1000 * _initialLoadAttempts, 5000); // max 5s
+            var delay = Math.min(1000 * _initialLoadAttempts, 5000);
 
             console.log(
                 `⏳ Services not loaded yet (attempt ${_initialLoadAttempts}/${_maxInitialRetries}), ` +
@@ -109,12 +115,14 @@ async function fetchServices() {
             return;
         }
 
+        // Serwisy załadowane
         if (data.services.length > 0) {
-            _initialLoadAttempts = _maxInitialRetries; // stop retrying
+            _initialLoadAttempts = _maxInitialRetries;
             console.log(`✅ Services loaded: ${data.services.length}`);
         }
 
         renderDashboard(data);
+
     } catch (err) {
         console.error('Fetch failed:', err);
 
@@ -129,21 +137,22 @@ async function fetchServices() {
 
 async function checkAll() {
     var btn = document.getElementById('check-all-btn');
-    if (btn.disabled)return;
+    if (btn.disabled) return;
 
     try {
-        btn.disabled = true;
+        btn.disabled    = true;
         btn.textContent = '🚀 Triggering…';
 
-        var res = await fetch('/api/trigger-manual-check', { method: 'POST' });
+        var res  = await fetch('/api/trigger-manual-check', { method: 'POST' });
         var data = await res.json();
 
         if (res.ok) {
             _checkStartedAt = Date.now();
 
-            _applyRunningState(true);
+            document.getElementById('check-banner').classList.add('visible');
+            _startCountdown();
 
-            var timeLeft = 60; // 60 sekund = 1.0 min
+            var timeLeft = 120;
             var countdownInterval = setInterval(function() {
                 timeLeft--;
                 var minutes = Math.floor(timeLeft / 60);
@@ -156,9 +165,10 @@ async function checkAll() {
             }, 1000);
 
             setTimeout(async function() {
-                console.log('✅ GitHub Actions workflow completed — refreshing all service statuses...');
+                console.log('✅ GitHub Actions completed — refreshing statuses...');
 
-                _applyRunningState(false);
+                document.getElementById('check-banner').classList.remove('visible');
+                _stopCountdown();
                 _checkStartedAt = null;
                 btn.textContent = '⟳ Check All Now';
                 btn.disabled = false;
@@ -176,7 +186,7 @@ async function checkAll() {
                     try {
                         await fetch('/api/services/' + svc.id + '/check', { method: 'POST' });
                     } catch (err) {
-                        console.error(`  Failed to check ${svc.name}:`, err);
+                        console.error(`  Failed: ${svc.name}`, err);
                     }
 
                     if (i < services.length - 1) {
@@ -185,13 +195,12 @@ async function checkAll() {
                 }
 
                 console.log('✅ All services refreshed');
-
                 await fetchServices();
 
-            }, 60000); // 60000ms = 2.0 min
+            }, 120000);
 
         } else {
-            alert('❌ Failed to trigger check:\n' + (data.error || 'Unknown error'));
+            alert('❌ Failed:\n' + (data.error || 'Unknown error'));
             btn.disabled    = false;
             btn.textContent = '⟳ Check All Now';
         }
@@ -288,13 +297,11 @@ function renderDashboard(data) {
     var services = data.services;
     var meta     = data.meta;
 
-    // Overall status — "checking" obsługiwane przez models.py i STATUS_CONFIG
     var oel  = document.getElementById('overall-status');
     var ocfg = getStatusConfig(meta.overall_status);
     oel.className   = 'overall-status ' + meta.overall_status;
     oel.textContent = ocfg.icon + ' ' + ocfg.label;
 
-    // Sync check_running — server jest źródłem prawdy
     var running = meta.check_running;
 
     if (running && !_wasRunning) {
@@ -304,21 +311,23 @@ function renderDashboard(data) {
         _checkStartedAt = null;
     }
     _wasRunning = running;
-    _applyRunningState(running);
 
-    // Auto-ping button
+    // Aplikuj stan TYLKO jeśli przycisk nie pokazuje countdown
+    var btn = document.getElementById('check-all-btn');
+    if (!btn.textContent.startsWith('⏳')) {
+        _applyRunningState(running);
+    }
+
     var apb = document.getElementById('auto-ping-btn');
     if (meta.auto_ping_enabled) { apb.className = 'btn active';   apb.textContent = '⏱ Auto-Ping: ON';  }
     else                        { apb.className = 'btn inactive'; apb.textContent = '⏱ Auto-Ping: OFF'; }
 
-    // Interval buttons
     document.querySelectorAll('.interval-btn').forEach(function(btn) {
         var val = parseInt(btn.getAttribute('data-interval'));
         btn.classList.toggle('active', val === meta.ping_interval);
         btn.disabled = !meta.auto_ping_enabled;
     });
 
-    // Check info
     var ci = document.getElementById('check-info');
     if (running) {
         ci.textContent = '⟳ Check in progress…';
@@ -339,10 +348,13 @@ function renderDashboard(data) {
         ci.textContent = 'No checks yet · Interval: ' + intervalLabel(meta.ping_interval);
     }
 
-    // Services grid
     var grid = document.getElementById('services-grid');
     if (services.length === 0) {
-        grid.innerHTML = '<div class="loading">No services configured. Add one below.</div>';
+        if (_initialLoadAttempts < _maxInitialRetries) {
+            grid.innerHTML = '<div class="loading">⏳ Loading services...</div>';
+        } else {
+            grid.innerHTML = '<div class="loading">No services configured. Add one below.</div>';
+        }
     } else {
         grid.innerHTML = services.map(function(svc) {
             var cfg     = getStatusConfig(svc.status);
@@ -375,7 +387,6 @@ function renderDashboard(data) {
         }).join('');
     }
 
-    // Business hours
     var bhEnabled = meta.business_hours_enabled;
     var bhBadge   = document.getElementById('bh-badge');
     var bhToggle  = document.getElementById('bh-toggle-btn');
@@ -396,6 +407,6 @@ function renderDashboard(data) {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 console.log('🚀 Shellty Pulse Dashboard starting...');
-fetchServices();  // pierwsza próba natychmiast
+fetchServices();
 _setPolling(POLL_IDLE);
 </script>

@@ -54,36 +54,37 @@
         <div class="loading">Loading services...</div>
     </div>
 
-    <div class="business-hours">
-        <div class="bh-header">
-            <h3>🕐 Business Hours — Keep-Alive</h3>
-            <span id="bh-badge" class="bh-badge off">OFF</span>
-        </div>
-        <div class="bh-body">
-            <div class="bh-control">
-                <span class="bh-label">From:</span>
-                <button class="bh-btn-adjust" onclick="adjustHour('bh-start', -1)">−</button>
-                <span id="bh-start" class="bh-hour-display">9</span>
-                <button class="bh-btn-adjust" onclick="adjustHour('bh-start', 1)">+</button>
-                <span class="bh-minutes">:00</span>
-            </div>
-            <span class="bh-separator">—</span>
-            <div class="bh-control">
-                <span class="bh-label">To:</span>
-                <button class="bh-btn-adjust" onclick="adjustHour('bh-end', -1)">−</button>
-                <span id="bh-end" class="bh-hour-display">15</span>
-                <button class="bh-btn-adjust" onclick="adjustHour('bh-end', 1)">+</button>
-                <span class="bh-minutes">:00</span>
-            </div>
-            <span class="bh-tz">CET</span>
-            <button id="bh-toggle-btn" class="btn-bh-toggle enable" onclick="toggleBusinessHours()">Enable</button>
-        </div>
-        <p class="bh-note">
-            ℹ️ When enabled, GitHub Actions wakes Shellty Pulse every 10 min within these hours (CET).
-            Shellty Pulse then checks services according to Auto-Ping settings above.
-            Outside these hours, Shellty Pulse sleeps normally.
-        </p>
+<div class="business-hours">
+    <div class="bh-header">
+        <h3>🕐 Business Hours — Keep-Alive</h3>
+        <span id="bh-badge" class="bh-badge off">OFF</span>
     </div>
+    <div class="bh-body">
+        <div class="bh-control">
+            <span class="bh-label">From:</span>
+            <button class="bh-btn-adjust" onclick="adjustHour('bh-start', -1)">−</button>
+            <span id="bh-start" class="bh-hour-display">9</span>
+            <button class="bh-btn-adjust" onclick="adjustHour('bh-start', 1)">+</button>
+            <span class="bh-minutes">:00</span>
+        </div>
+        <span class="bh-separator">—</span>
+        <div class="bh-control">
+            <span class="bh-label">To:</span>
+            <button class="bh-btn-adjust" onclick="adjustHour('bh-end', -1)">−</button>
+            <span id="bh-end" class="bh-hour-display">15</span>
+            <button class="bh-btn-adjust" onclick="adjustHour('bh-end', 1)">+</button>
+            <span class="bh-minutes">:00</span>
+        </div>
+        <span class="bh-tz">CET</span>
+        <button id="bh-toggle-btn" class="btn-bh-toggle enable" onclick="toggleBusinessHours()">Enable</button>
+    </div>
+    <p class="bh-note">
+        ℹ️ When enabled, GitHub Actions wakes <strong>all services</strong> every 10 min within these hours (CET).
+        Outside these hours, all services sleep to save Render hours.
+        <br>
+        <strong>Note:</strong> Auto-Ping setting is a local fallback (not used on Render free tier).
+    </p>
+</div>
 
     <div class="add-service">
         <h3>➕ Add New Service</h3>
