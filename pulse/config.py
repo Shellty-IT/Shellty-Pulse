@@ -11,15 +11,19 @@ import os
 VERSION = "1.0.0"
 
 # ── Runtime settings from environment ───────────────────────────────────────
-PORT = int(os.environ.get("PORT", 5000))
-REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 90))
-MAX_SERVICES = int(os.environ.get("MAX_SERVICES", 50))
+PORT             = int(os.environ.get("PORT", 5000))
+REQUEST_TIMEOUT  = int(os.environ.get("REQUEST_TIMEOUT", 90))
+MAX_SERVICES     = int(os.environ.get("MAX_SERVICES", 50))
 PING_INTERVAL_DEFAULT = int(os.environ.get("PING_INTERVAL", 900))
-SERVICES_JSON = os.environ.get("SERVICES", "[]")
+SERVICES_JSON    = os.environ.get("SERVICES", "[]")
+
+# ── GitHub integration ───────────────────────────────────────────────────────
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO  = os.environ.get("GITHUB_REPO", "")
 
 # ── Input length limits ──────────────────────────────────────────────────────
 MAX_NAME_LENGTH = 100
-MAX_URL_LENGTH = 2048
+MAX_URL_LENGTH  = 2048
 
 # ── Available ping intervals: seconds → human label ─────────────────────────
 AVAILABLE_INTERVALS: dict[int, str] = {
@@ -42,6 +46,6 @@ BLOCKED_HOSTS: frozenset[str] = frozenset({
 
 # ── Business Hours defaults ──────────────────────────────────────────────────
 BUSINESS_HOURS_ENABLED_DEFAULT: bool = False
-BUSINESS_HOURS_START_DEFAULT: int = 9
-BUSINESS_HOURS_END_DEFAULT: int = 15
-BUSINESS_HOURS_TIMEZONE: str = "Europe/Warsaw"
+BUSINESS_HOURS_START_DEFAULT: int    = 9
+BUSINESS_HOURS_END_DEFAULT: int      = 15
+BUSINESS_HOURS_TIMEZONE: str         = "Europe/Warsaw"
