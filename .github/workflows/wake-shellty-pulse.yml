@@ -101,7 +101,8 @@ jobs:
           WAKE_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 30 \
             -X POST "$APP_URL/api/wake-and-check" \
-            -H "Content-Type: application/json")
+            -H "Content-Type: application/json" \
+            -H "X-Wake-Secret: ${{ secrets.WAKE_SECRET }}")
           echo "   /api/wake-and-check → HTTP $WAKE_RESP"
 
           echo ""
@@ -188,7 +189,8 @@ jobs:
           WAKE_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 30 \
             -X POST "$APP_URL/api/wake-and-check" \
-            -H "Content-Type: application/json")
+            -H "Content-Type: application/json" \
+            -H "X-Wake-Secret: ${{ secrets.WAKE_SECRET }}")
           echo "   /api/wake-and-check → HTTP $WAKE_RESP"
 
           echo "✅ Phase 3 complete"

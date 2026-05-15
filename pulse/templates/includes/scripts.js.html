@@ -2,7 +2,7 @@
 // ── Stałe ────────────────────────────────────────────────────────────────────
 var POLL_IDLE        = 30000;   // poll co 30s gdy brak checku
 var POLL_ACTIVE      = 4000;    // poll co 4s gdy check trwa
-var COLD_START_WAIT  = 60;      // czas odliczania (60s)
+var COLD_START_WAIT  = 120;     // czas odliczania (120s — Render cold start ~90s)
 
 var STATUS_CONFIG = {
     checking:    { icon: '🔵', label: 'Checking Services…'      },
@@ -23,6 +23,8 @@ var _initialLoadAttempts = 0;
 var _maxInitialRetries   = 15;      // więcej prób przy cold start
 var _retryTimer          = null;    // aktywny timer retry (zapobiega duplikatom)
 var _countdownInterval   = null;
+var _bhUserEditing       = false;   // true gdy użytkownik modyfikuje godziny BH
+var _bhEditTimer         = null;    // auto-reset flagi edycji po 2 min braku aktywności
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function getStatusConfig(s) { return STATUS_CONFIG[s] || STATUS_CONFIG.unknown; }
@@ -254,6 +256,9 @@ function adjustHour(elementId, delta) {
     if (val < 0)  val = 23;
     if (val > 23) val = 0;
     elem.textContent = val;
+    _bhUserEditing = true;
+    if (_bhEditTimer) clearTimeout(_bhEditTimer);
+    _bhEditTimer = setTimeout(function() { _bhUserEditing = false; _bhEditTimer = null; }, 120000);
 }
 
 async function toggleBusinessHours() {
@@ -278,8 +283,11 @@ async function toggleBusinessHours() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled: enabled, start: start, end: end })
         });
-        if (res.ok) await fetchServices();
-        else { var e = await res.json(); alert(e.error || 'Failed.'); }
+        if (res.ok) {
+            _bhUserEditing = false;
+            if (_bhEditTimer) { clearTimeout(_bhEditTimer); _bhEditTimer = null; }
+            await fetchServices();
+        } else { var e = await res.json(); alert(e.error || 'Failed.'); }
     } catch (err) { console.error(err); }
 }
 
@@ -376,16 +384,11 @@ function renderDashboard(data) {
         }).join('');
     }
 
-    // Business hours — aktualizuj tylko gdy użytkownik nie edytuje
-    // (sprawdzamy czy focus jest na elementach BH)
+    // Business hours — aktualizuj tylko gdy użytkownik nie edytuje (+/- przyciskami)
     var bhStart = document.getElementById('bh-start');
     var bhEnd   = document.getElementById('bh-end');
-    var userEditingBH = (
-        document.activeElement === bhStart ||
-        document.activeElement === bhEnd
-    );
 
-    if (!userEditingBH) {
+    if (!_bhUserEditing) {
         bhStart.textContent = meta.business_hours_start;
         bhEnd.textContent   = meta.business_hours_end;
     }
