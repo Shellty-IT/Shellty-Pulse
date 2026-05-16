@@ -114,13 +114,15 @@ jobs:
             exit 1
           fi
 
-          echo "🔥 Firing all services (kick cold starts)..."
+          echo "🔥 Firing all enabled services (kick cold starts)..."
           echo "$SERVICES_JSON" | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
           services = data.get('services', [])
-          print(f'  Found {len(services)} services')
-          for svc in services:
+          active   = [s for s in services if s.get('enabled', True)]
+          skipped  = len(services) - len(active)
+          print(f'  Found {len(services)} services ({len(active)} active, {skipped} disabled)')
+          for svc in active:
               print(svc['url'])
           " | tail -n +2 | while read -r url; do
             echo "  🔥 Firing: $url"
@@ -154,12 +156,14 @@ jobs:
 
           data = json.load(sys.stdin)
           services = data.get('services', [])
-          print(f'Verifying {len(services)} services...')
+          active   = [s for s in services if s.get('enabled', True)]
+          skipped  = len(services) - len(active)
+          print(f'Verifying {len(active)} active service(s) (skipping {skipped} disabled)...')
 
           success = 0
           failed  = 0
 
-          for svc in services:
+          for svc in active:
               name = svc['name']
               url  = svc['url']
               print(f'  ✔️  Checking: {name}')

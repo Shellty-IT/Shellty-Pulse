@@ -55,6 +55,7 @@
     .legend-dot.slow { background: #db6d28; }
     .legend-dot.down { background: #f85149; }
     .legend-dot.unknown { background: #484f58; }
+    .legend-dot.disabled { background: #6e7681; border: 1px dashed #8b949e; }
     .legend-desc { color: #6e7681; }
     .controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: center; margin-bottom: 1.5rem; }
     .btn { padding: 0.6rem 1.2rem; border: 1px solid #30363d; border-radius: 8px; background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 0.9rem; transition: all 0.2s; }
@@ -73,8 +74,11 @@
     .interval-btn:disabled:hover { border-color: #30363d; color: #8b949e; }
     .check-info { color: #8b949e; font-size: 0.85rem; text-align: center; width: 100%; }
     .services-grid { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 2rem; }
-    .service-card { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.25rem; background: #161b22; border: 1px solid #30363d; border-radius: 10px; transition: border-color 0.2s; }
+    .service-card { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.25rem; background: #161b22; border: 1px solid #30363d; border-radius: 10px; transition: border-color 0.2s, opacity 0.2s; }
     .service-card:hover { border-color: #58a6ff; }
+    .service-card.disabled { opacity: 0.55; border-style: dashed; }
+    .service-card.disabled:hover { border-color: #484f58; }
+    .disabled-badge { display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.45rem; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; background: #21262d; color: #8b949e; border: 1px solid #484f58; border-radius: 10px; vertical-align: middle; }
     .status-icon { font-size: 1.5rem; flex-shrink: 0; }
     .service-info { flex: 1; min-width: 0; }
     .service-name { font-weight: 600; color: #f0f6fc; font-size: 1rem; margin-bottom: 0.15rem; }
@@ -100,7 +104,40 @@
     .btn-icon:hover { background: #30363d; border-color: #58a6ff; }
     .btn-icon.delete:hover { border-color: #f85149; color: #f85149; }
     .btn-icon.spinning { animation: spin 1s linear infinite; }
+    .btn-icon:disabled { opacity: 0.35; cursor: not-allowed; }
+    .btn-icon:disabled:hover { background: #21262d; border-color: #30363d; }
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    /* ── Per-service enabled toggle (switch) ── */
+    .service-toggle {
+        position: relative;
+        width: 40px;
+        height: 22px;
+        padding: 0;
+        border: 1px solid #30363d;
+        border-radius: 999px;
+        background: #21262d;
+        cursor: pointer;
+        transition: background 0.18s ease, border-color 0.18s ease;
+        flex-shrink: 0;
+    }
+    .service-toggle .toggle-knob {
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #8b949e;
+        transition: transform 0.18s ease, background 0.18s ease;
+    }
+    .service-toggle.on { background: #0d1f0d; border-color: #238636; }
+    .service-toggle.on .toggle-knob { transform: translateX(18px); background: #3fb950; }
+    .service-toggle.off { background: #1f0d0d; border-color: #6e1f1f; }
+    .service-toggle.off .toggle-knob { background: #6e7681; }
+    .service-toggle:hover { border-color: #58a6ff; }
+    .service-toggle.busy { opacity: 0.5; cursor: progress; }
+    .service-toggle:disabled { cursor: not-allowed; }
     .business-hours { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 1.25rem; margin-bottom: 1rem; }
     .bh-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem; }
     .bh-header h3 { color: #f0f6fc; font-size: 1rem; margin: 0; }

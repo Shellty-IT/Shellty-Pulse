@@ -10,7 +10,8 @@ var STATUS_CONFIG = {
     degraded:    { icon: '🟡', label: 'Performance Degraded'    },
     slow:        { icon: '🟠', label: 'Slow Response Detected'  },
     down:        { icon: '🔴', label: 'Service Outage Detected' },
-    unknown:     { icon: '⚪', label: 'Status Unknown'          }
+    unknown:     { icon: '⚪', label: 'Status Unknown'          },
+    disabled:    { icon: '⏸',  label: 'Service Disabled'        }
 };
 
 // ── Stan lokalny ─────────────────────────────────────────────────────────────
@@ -248,6 +249,26 @@ async function deleteService(id) {
     catch (err) { console.error(err); }
 }
 
+async function toggleServiceEnabled(id) {
+    // Flip per-service kill switch. Backend persists the full disabled
+    // list to GitHub Variables (DISABLED_SERVICES) so it survives
+    // container restarts on Render.
+    var btn = document.getElementById('toggle-btn-' + id);
+    if (btn) { btn.disabled = true; btn.classList.add('busy'); }
+    try {
+        var res = await fetch('/api/services/' + id + '/toggle-enabled', { method: 'POST' });
+        if (!res.ok) {
+            var e = await res.json().catch(function () { return {}; });
+            alert(e.error || ('Failed (HTTP ' + res.status + ').'));
+        }
+        await fetchServices();
+    } catch (err) {
+        console.error(err);
+        alert('❌ Error: ' + err.message);
+    }
+    if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
+}
+
 function adjustHour(elementId, delta) {
     var elem = document.getElementById(elementId);
     var val  = parseInt(elem.textContent);
@@ -354,7 +375,11 @@ function renderDashboard(data) {
         }
     } else {
         grid.innerHTML = services.map(function(svc) {
-            var cfg      = getStatusConfig(svc.status);
+            // Per-service enabled defaults to true if backend didn't send it.
+            var isEnabled = svc.enabled !== false;
+            // When disabled, ignore real status icon — show pause badge.
+            var effectiveStatus = isEnabled ? svc.status : 'disabled';
+            var cfg      = getStatusConfig(effectiveStatus);
             var upPct    = svc.uptime_percent !== null ? svc.uptime_percent.toFixed(1) : '—';
             var upColor  = svc.uptime_percent !== null ? uptimeColor(svc.uptime_percent) : '#484f58';
             var upWidth  = svc.uptime_percent !== null ? svc.uptime_percent : 0;
@@ -362,13 +387,24 @@ function renderDashboard(data) {
                 ? '<a href="' + escapeHtml(svc.frontend_url) + '" target="_blank" rel="noopener noreferrer">'
                   + escapeHtml(svc.name) + ' <span class="link-arrow">↗</span></a>'
                 : escapeHtml(svc.name);
+            var disabledBadge = isEnabled
+                ? ''
+                : ' <span class="disabled-badge">disabled</span>';
             var backendHtml = '<span class="backend-label">Backend:</span> '
                 + '<a href="' + escapeHtml(svc.url) + '" target="_blank" rel="noopener noreferrer" class="backend-link">'
                 + escapeHtml(svc.url) + '</a>';
-            return '<div class="service-card">'
+            var toggleCls  = 'service-toggle' + (isEnabled ? ' on' : ' off');
+            var toggleLbl  = isEnabled ? 'Active — click to disable' : 'Disabled — click to enable';
+            // Check button — locked when service is disabled (defence in
+            // depth: backend also returns 409, but UI prevents the call).
+            var checkBtn = isEnabled
+                ? '<button id="check-btn-' + svc.id + '" class="btn-icon" onclick="checkService(\'' + svc.id + '\')" title="Check now">⟳</button>'
+                : '<button class="btn-icon" disabled title="Enable service before checking">⟳</button>';
+            var cardCls = 'service-card' + (isEnabled ? '' : ' disabled');
+            return '<div class="' + cardCls + '">'
                 + '<div class="status-icon">' + cfg.icon + '</div>'
                 + '<div class="service-info">'
-                +   '<div class="service-name">' + nameHtml + '</div>'
+                +   '<div class="service-name">' + nameHtml + disabledBadge + '</div>'
                 +   '<div class="service-backend">' + backendHtml + '</div>'
                 + '</div>'
                 + '<div class="service-meta">'
@@ -377,7 +413,8 @@ function renderDashboard(data) {
                 +   '<div class="uptime-text">Uptime: ' + upPct + '%</div>'
                 + '</div>'
                 + '<div class="service-actions">'
-                +   '<button id="check-btn-' + svc.id + '" class="btn-icon" onclick="checkService(\'' + svc.id + '\')" title="Check now">⟳</button>'
+                +   '<button id="toggle-btn-' + svc.id + '" class="' + toggleCls + '" onclick="toggleServiceEnabled(\'' + svc.id + '\')" title="' + toggleLbl + '"><span class="toggle-knob"></span></button>'
+                +   checkBtn
                 +   '<button class="btn-icon delete" onclick="deleteService(\'' + svc.id + '\')" title="Delete">✕</button>'
                 + '</div>'
                 + '</div>';

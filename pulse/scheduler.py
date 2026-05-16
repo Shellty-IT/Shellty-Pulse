@@ -155,6 +155,94 @@ def load_business_hours_from_github() -> None:
         )
 
 
+def load_disabled_services_from_github() -> None:
+    """
+    Read DISABLED_SERVICES (JSON array of service URLs) from GitHub Actions
+    Variables and mark matching services in ``state.services`` as
+    ``enabled=False``.
+
+    Must be called AFTER ``load_services_from_env()`` — otherwise there are
+    no services to flip.
+
+    Falls back silently if GITHUB_TOKEN / GITHUB_REPO are missing, the
+    variable does not exist, or the JSON is malformed.
+    """
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        logger.info(
+            "DISABLED_SERVICES sync skipped: GITHUB_TOKEN or GITHUB_REPO "
+            "not set — all services enabled by default."
+        )
+        return
+
+    try:
+        import requests as http_requests
+
+        url     = (
+            f"https://api.github.com/repos/{GITHUB_REPO}"
+            f"/actions/variables/DISABLED_SERVICES"
+        )
+        headers = {
+            "Authorization":        f"Bearer {GITHUB_TOKEN}",
+            "Accept":               "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        resp = http_requests.get(url, headers=headers, timeout=10)
+
+        if resp.status_code == 404:
+            logger.info(
+                "GitHub Variable DISABLED_SERVICES not found — "
+                "all services enabled."
+            )
+            return
+        if resp.status_code != 200:
+            logger.warning(
+                "DISABLED_SERVICES: HTTP %d — keeping all services enabled.",
+                resp.status_code,
+            )
+            return
+
+        raw = resp.json().get("value", "")
+        try:
+            disabled_urls = json.loads(raw) if raw else []
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "DISABLED_SERVICES is not valid JSON (%s) — ignoring.", exc,
+            )
+            return
+
+        if not isinstance(disabled_urls, list):
+            logger.warning(
+                "DISABLED_SERVICES is not a JSON array — ignoring."
+            )
+            return
+
+        # Normalise to set of strings for O(1) lookup.
+        disabled_set = {str(u) for u in disabled_urls if isinstance(u, str)}
+
+        if not disabled_set:
+            logger.info("DISABLED_SERVICES is empty — all services enabled.")
+            return
+
+        flipped = 0
+        with state.services_lock:
+            for svc in state.services:
+                if svc["url"] in disabled_set:
+                    svc["enabled"] = False
+                    svc["status"]  = "disabled"
+                    flipped += 1
+
+        logger.info(
+            "✅ Applied DISABLED_SERVICES from GitHub Variables: "
+            "%d service(s) marked disabled.", flipped,
+        )
+
+    except Exception as exc:
+        logger.warning(
+            "Failed to load DISABLED_SERVICES from GitHub Variables: %s — "
+            "keeping all enabled.", exc,
+        )
+
+
 # ── Environment pre-loading ──────────────────────────────────────────────────
 
 def load_services_from_env() -> None:
@@ -226,6 +314,10 @@ def start_background_services() -> None:
     # Sync business hours from GitHub Variables — survives container restarts
     logger.info("Syncing business hours from GitHub Variables...")
     load_business_hours_from_github()
+
+    # Sync per-service disabled flags from GitHub Variables (kill switch).
+    logger.info("Syncing disabled services from GitHub Variables...")
+    load_disabled_services_from_github()
 
     # Start scheduler as fallback
     scheduler = BackgroundScheduler(daemon=True)

@@ -9,9 +9,15 @@ Changes vs previous version:
 - Added /api/trigger-manual-check endpoint (triggers GitHub Actions workflow)
 - /api/wake-and-check now always wakes services (business hours = unconditional)
 - Business hours now support overnight windows (e.g. 23:00–01:00)
+- Per-service kill switch:
+    * POST /api/services/<id>/toggle-enabled flips the flag and syncs
+      the full disabled list to GitHub Variables (DISABLED_SERVICES).
+    * Disabled services are skipped by fire/verify/check_single paths.
+    * Single-service /check route returns 409 if the service is disabled.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -94,6 +100,69 @@ def _sync_business_hours_to_github(enabled: bool, start: int, end: int) -> bool:
     except Exception as exc:
         logger.error("GitHub sync exception: %s", exc)
         return False
+
+
+def _sync_disabled_services_to_github(disabled_urls: list[str]) -> bool:
+    """
+    Push the full list of disabled service URLs to GitHub Actions Variables
+    as the ``DISABLED_SERVICES`` repo variable (JSON-encoded array).
+
+    Always writes the full list — not a delta — so the GitHub Variable is
+    authoritative. Empty list ⇒ ``"[]"``.
+
+    Requires GITHUB_TOKEN and GITHUB_REPO env vars. Returns True on success.
+    """
+    if not _GITHUB_TOKEN or not _GITHUB_REPO:
+        logger.warning(
+            "DISABLED_SERVICES sync skipped: GITHUB_TOKEN or GITHUB_REPO "
+            "not set."
+        )
+        return False
+
+    base    = f"https://api.github.com/repos/{_GITHUB_REPO}/actions/variables"
+    headers = {
+        "Authorization":        f"Bearer {_GITHUB_TOKEN}",
+        "Accept":               "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    payload = {
+        "name":  "DISABLED_SERVICES",
+        "value": json.dumps(disabled_urls, separators=(",", ":")),
+    }
+
+    try:
+        # Try PATCH first (variable exists), fall back to POST (create).
+        resp = http_requests.patch(
+            f"{base}/DISABLED_SERVICES", headers=headers,
+            json=payload, timeout=10,
+        )
+        if resp.status_code == 404:
+            resp = http_requests.post(
+                base, headers=headers, json=payload, timeout=10,
+            )
+        if resp.status_code not in (200, 201, 204):
+            logger.error(
+                "DISABLED_SERVICES sync failed: HTTP %d — %s",
+                resp.status_code, resp.text[:200],
+            )
+            return False
+        logger.info(
+            "✅ DISABLED_SERVICES synced to GitHub: %d url(s).",
+            len(disabled_urls),
+        )
+        return True
+    except Exception as exc:
+        logger.error("DISABLED_SERVICES sync exception: %s", exc)
+        return False
+
+
+def _collect_disabled_urls() -> list[str]:
+    """Snapshot all URLs currently marked disabled (under lock)."""
+    with state.services_lock:
+        return [
+            svc["url"] for svc in state.services
+            if not svc.get("enabled", True)
+        ]
 
 
 # ── GET /api/services ────────────────────────────────────────────────────────
@@ -182,20 +251,84 @@ def check_service_route(service_id: str):
                 break
     if not target:
         return jsonify({"error": "Service not found."}), 404
+    # Refuse if disabled — UI greys out the button, but this is the
+    # server-side guard (e.g. direct curl, stale tab).
+    if not target.get("enabled", True):
+        return jsonify({
+            "error": "Service is disabled — enable it before checking.",
+        }), 409
     check_single_service(target)
     with state.services_lock:
         return jsonify(target.copy())
+
+
+# ── POST /api/services/<id>/toggle-enabled ───────────────────────────────────
+
+@api_bp.post("/services/<service_id>/toggle-enabled")
+def toggle_service_enabled_route(service_id: str):
+    """
+    Flip per-service kill switch and async-sync the full disabled list to
+    GitHub Variables (DISABLED_SERVICES) so it survives container restarts.
+
+    - When disabling: also force status to ``"disabled"`` so the UI is
+      immediately clear (no stale ``"operational"`` glow on a service
+      that has just been switched off).
+    - When enabling:  reset status to ``"unknown"`` so the next check
+      drives it to a real value.
+
+    Sync is fire-and-forget — UI doesn't wait.
+    """
+    new_enabled  = None
+    snapshot_svc = None
+    with state.services_lock:
+        for svc in state.services:
+            if svc["id"] == service_id:
+                svc["enabled"] = not svc.get("enabled", True)
+                new_enabled    = svc["enabled"]
+                if new_enabled:
+                    # Re-enabled: clear status so next check sets a real one.
+                    svc["status"]           = "unknown"
+                    svc["response_time_ms"] = None
+                else:
+                    # Disabled: visually mark it right away.
+                    svc["status"]           = "disabled"
+                    svc["response_time_ms"] = None
+                snapshot_svc = svc.copy()
+                break
+
+    if snapshot_svc is None:
+        return jsonify({"error": "Service not found."}), 404
+
+    logger.info(
+        "Service %s (%s): enabled → %s",
+        snapshot_svc["name"], snapshot_svc["url"], new_enabled,
+    )
+
+    # Collect full disabled list AFTER the flip, push to GitHub async.
+    disabled_urls = _collect_disabled_urls()
+    threading.Thread(
+        target=_sync_disabled_services_to_github,
+        args=(disabled_urls,),
+        daemon=True,
+        name="github-disabled-sync",
+    ).start()
+
+    return jsonify(snapshot_svc), 200
 
 
 # ── POST /api/fire-all ───────────────────────────────────────────────────────
 
 @api_bp.post("/fire-all")
 def fire_all_route():
-    """Phase 1: Fire all services (kick cold starts). Returns immediately."""
+    """Phase 1: Fire all enabled services (kick cold starts). Returns immediately."""
     with state.services_lock:
         snapshot = [svc.copy() for svc in state.services]
 
-    logger.info("🔥 Firing all %d services to wake cold starts...", len(snapshot))
+    active_count = sum(1 for s in snapshot if s.get("enabled", True))
+    logger.info(
+        "🔥 Firing %d active service(s) to wake cold starts (of %d total)...",
+        active_count, len(snapshot),
+    )
 
     threading.Thread(
         target=fire_all,
@@ -206,7 +339,8 @@ def fire_all_route():
 
     return jsonify({
         "status":         "fired",
-        "services_count": len(snapshot),
+        "services_count": active_count,
+        "total_services": len(snapshot),
         "message":        "Cold starts initiated. Call /api/verify-all in 120 seconds.",
     }), 202
 
@@ -215,14 +349,18 @@ def fire_all_route():
 
 @api_bp.post("/verify-all")
 def verify_all_route():
-    """Phase 3: Verify all services. Call this 120s after /api/fire-all."""
+    """Phase 3: Verify all enabled services. Call this 120s after /api/fire-all."""
     if is_check_running():
         return jsonify({"message": "Check already running.", "check_running": True}), 409
 
     with state.services_lock:
         snapshot = [svc.copy() for svc in state.services]
 
-    logger.info("✔️ Verifying all %d services...", len(snapshot))
+    active_count = sum(1 for s in snapshot if s.get("enabled", True))
+    logger.info(
+        "✔️ Verifying %d active service(s) (of %d total)...",
+        active_count, len(snapshot),
+    )
 
     def _verify_in_background():
         if not checker_mod._check_lock.acquire(blocking=False):
@@ -244,7 +382,8 @@ def verify_all_route():
 
     return jsonify({
         "status":         "verifying",
-        "services_count": len(snapshot),
+        "services_count": active_count,
+        "total_services": len(snapshot),
         "message":        "Verification started in background.",
     }), 202
 
