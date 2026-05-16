@@ -377,6 +377,10 @@ function renderDashboard(data) {
         grid.innerHTML = services.map(function(svc) {
             // Per-service enabled defaults to true if backend didn't send it.
             var isEnabled = svc.enabled !== false;
+            // Shellty Pulse itself — its health URL starts with the same
+            // origin the dashboard is served from. Never show the toggle
+            // for it: you can't disable the monitor itself.
+            var isSelf = svc.url.indexOf(window.location.origin) === 0;
             // When disabled, ignore real status icon — show pause badge.
             var effectiveStatus = isEnabled ? svc.status : 'disabled';
             var cfg      = getStatusConfig(effectiveStatus);
@@ -393,8 +397,13 @@ function renderDashboard(data) {
             var backendHtml = '<span class="backend-label">Backend:</span> '
                 + '<a href="' + escapeHtml(svc.url) + '" target="_blank" rel="noopener noreferrer" class="backend-link">'
                 + escapeHtml(svc.url) + '</a>';
-            var toggleCls  = 'service-toggle' + (isEnabled ? ' on' : ' off');
-            var toggleLbl  = isEnabled ? 'Active — click to disable' : 'Disabled — click to enable';
+            // Toggle switch — hidden for Shellty Pulse itself.
+            var toggleBtn = isSelf
+                ? ''
+                : '<button id="toggle-btn-' + svc.id + '" class="service-toggle' + (isEnabled ? ' on' : ' off') + '" '
+                  + 'onclick="toggleServiceEnabled(\'' + svc.id + '\')" '
+                  + 'title="' + (isEnabled ? 'Active — click to disable' : 'Disabled — click to enable') + '">'
+                  + '<span class="toggle-knob"></span></button>';
             // Check button — locked when service is disabled (defence in
             // depth: backend also returns 409, but UI prevents the call).
             var checkBtn = isEnabled
@@ -413,7 +422,7 @@ function renderDashboard(data) {
                 +   '<div class="uptime-text">Uptime: ' + upPct + '%</div>'
                 + '</div>'
                 + '<div class="service-actions">'
-                +   '<button id="toggle-btn-' + svc.id + '" class="' + toggleCls + '" onclick="toggleServiceEnabled(\'' + svc.id + '\')" title="' + toggleLbl + '"><span class="toggle-knob"></span></button>'
+                +   toggleBtn
                 +   checkBtn
                 +   '<button class="btn-icon delete" onclick="deleteService(\'' + svc.id + '\')" title="Delete">✕</button>'
                 + '</div>'
