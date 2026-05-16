@@ -23,7 +23,7 @@ A lightweight, self-hosted service health monitor with an intelligent keep-alive
 ### Production (Render free tier)
 
 ```
-GitHub Actions cron (every 10 min)
+GitHub Actions cron (every 12 min, shifted)
         │
         ├─ Check business hours (GitHub Variables: BH_ENABLED / BH_START / BH_END)
         │
