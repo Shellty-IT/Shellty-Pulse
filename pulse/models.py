@@ -36,6 +36,12 @@ def create_service(
         "total_checks":       0,
         "successful_checks":  0,
         "uptime_percent":     None,
+        # Per-service kill switch — when False, service is skipped by
+        # all wake/check paths (auto-ping, business-hours wake, manual
+        # check-all, per-service ⟳ button, GitHub Actions workflow).
+        # Persisted across container restarts via DISABLED_SERVICES
+        # GitHub Variable (keyed by URL — id is a fresh UUID each boot).
+        "enabled":            True,
     }
 
 
@@ -80,10 +86,13 @@ def get_overall_status() -> str:
         return "checking"
 
     with state.services_lock:
-        if not state.services:
+        # Wyłączone serwisy nie wpływają na overall status — pomijamy.
+        active = [svc for svc in state.services if svc.get("enabled", True)]
+        if not active:
+            # Brak aktywnych serwisów (wszystkie wyłączone lub lista pusta).
             return "unknown"
 
-        statuses = [svc["status"] for svc in state.services]
+        statuses = [svc["status"] for svc in active]
 
         # Jeśli wszystkie unknown → nie było jeszcze checku
         if all(s == "unknown" for s in statuses):

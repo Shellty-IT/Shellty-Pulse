@@ -86,10 +86,22 @@ def _fire_single(service: dict) -> None:
 
 
 def fire_all(snapshot: list[dict]) -> None:
-    """Kick cold start on all services simultaneously."""
-    logger.info("Phase 1 — firing all %d services in parallel...", len(snapshot))
-    with ThreadPoolExecutor(max_workers=len(snapshot) or 1) as ex:
-        futures = {ex.submit(_fire_single, svc): svc["name"] for svc in snapshot}
+    """
+    Kick cold start on all enabled services simultaneously.
+    Disabled services are silently skipped.
+    """
+    active = [svc for svc in snapshot if svc.get("enabled", True)]
+    skipped = len(snapshot) - len(active)
+    if skipped:
+        logger.info(
+            "Phase 1 — %d service(s) skipped (disabled).", skipped,
+        )
+    if not active:
+        logger.info("Phase 1 — no active services to fire.")
+        return
+    logger.info("Phase 1 — firing all %d services in parallel...", len(active))
+    with ThreadPoolExecutor(max_workers=len(active)) as ex:
+        futures = {ex.submit(_fire_single, svc): svc["name"] for svc in active}
         for f in as_completed(futures):
             try:
                 f.result()
@@ -192,10 +204,22 @@ def _verify_single(service: dict) -> None:
 
 
 def verify_all(snapshot: list[dict]) -> None:
-    """Verify all services in parallel after cold-start wait."""
-    logger.info("Phase 3 — verifying all %d services in parallel...", len(snapshot))
-    with ThreadPoolExecutor(max_workers=len(snapshot) or 1) as ex:
-        futures = {ex.submit(_verify_single, svc): svc["name"] for svc in snapshot}
+    """
+    Verify all enabled services in parallel after cold-start wait.
+    Disabled services are silently skipped (their stored status remains).
+    """
+    active = [svc for svc in snapshot if svc.get("enabled", True)]
+    skipped = len(snapshot) - len(active)
+    if skipped:
+        logger.info(
+            "Phase 3 — %d service(s) skipped (disabled).", skipped,
+        )
+    if not active:
+        logger.info("Phase 3 — no active services to verify.")
+        return
+    logger.info("Phase 3 — verifying all %d services in parallel...", len(active))
+    with ThreadPoolExecutor(max_workers=len(active)) as ex:
+        futures = {ex.submit(_verify_single, svc): svc["name"] for svc in active}
         for f in as_completed(futures):
             try:
                 f.result()
@@ -211,7 +235,16 @@ def check_single_service(service: dict) -> None:
     Manual single-service check from the dashboard row button.
     Goes straight to verify (no fire phase) — user triggered, service
     likely already warm or they want the raw current state.
+
+    Disabled services are silently skipped (UI also blocks the button,
+    this is defence in depth).
     """
+    if not service.get("enabled", True):
+        logger.info(
+            "  ⏭ Skipping single-service check for %s — service disabled.",
+            service.get("name", "?"),
+        )
+        return
     _verify_single(service)
 
 
@@ -234,7 +267,7 @@ def check_all_services() -> None:
         _check_running = True
 
         with state.services_lock:
-            snapshot = list(state.services)
+            snapshot = [svc.copy() for svc in state.services]
 
         logger.warning(
             "check_all_services() called — DEPRECATED, use fire_all + verify_all"
@@ -245,7 +278,7 @@ def check_all_services() -> None:
             logger.info("No services configured.")
             return
 
-        # Just verify — no fire/wait phases
+        # verify_all() applies the enabled filter internally.
         verify_all(snapshot)
 
         with state.services_lock:
