@@ -2,7 +2,9 @@ name: Wake Shellty Pulse (Business Hours)
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    # Every 12 min, offset by 5 — avoids the heavily throttled :00/:10/:20…
+    # boundaries where GitHub Actions schedules tend to be delayed or dropped.
+    - cron: '5,17,29,41,53 * * * *'
   workflow_dispatch:
     inputs:
       manual_trigger:
@@ -92,17 +94,41 @@ jobs:
         if: steps.check-time.outputs.should_wake == 'true'
         run: |
           echo "🔔 Waking Shellty Pulse..."
-          curl -sf --max-time 30 "$APP_URL/health" > /dev/null 2>&1 \
-            && echo "✅ Shellty Pulse is awake" \
-            || echo "⚠️ Pulse was sleeping — waking up"
+          # First touch kicks the Render cold start. We don't care about
+          # the result — the act of connecting is what wakes the dyno.
+          curl -s -o /dev/null --max-time 30 "$APP_URL/health" || true
+          echo "   (kick sent — Render dyno may take up to 90s to boot)"
+
+          echo ""
+          echo "⏳ Waiting for Pulse to become responsive..."
+          # Up to 12 × 10s = 120s wait. Stop as soon as /health returns 200.
+          PULSE_READY=false
+          for i in $(seq 1 12); do
+            HC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$APP_URL/health" || echo "000")
+            if [ "$HC" = "200" ]; then
+              echo "   ✅ Pulse up after ~$((i * 10))s (HTTP 200)"
+              PULSE_READY=true
+              break
+            fi
+            echo "   …attempt $i/12 → HTTP $HC, retry in 10s"
+            sleep 10
+          done
+
+          if [ "$PULSE_READY" != "true" ]; then
+            echo "⚠️ Pulse did not come up within 120s — skipping API-driven phase"
+            echo "   Workflow will not be able to fetch service list or call /api/wake-and-check this round"
+            exit 0
+          fi
 
           echo ""
           echo "🔔 Calling /api/wake-and-check..."
+          # || echo "000" so curl failure does not blow the script under set -e
           WAKE_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 30 \
             -X POST "$APP_URL/api/wake-and-check" \
             -H "Content-Type: application/json" \
-            -H "X-Wake-Secret: ${{ secrets.WAKE_SECRET }}")
+            -H "X-Wake-Secret: ${{ secrets.WAKE_SECRET }}" \
+            || echo "000")
           echo "   /api/wake-and-check → HTTP $WAKE_RESP"
 
           echo ""
@@ -190,11 +216,13 @@ jobs:
 
           echo ""
           echo "🔔 Final wake-and-check to update statuses in Pulse..."
+          # || echo "000" so curl failure does not blow the script under set -e
           WAKE_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 30 \
             -X POST "$APP_URL/api/wake-and-check" \
             -H "Content-Type: application/json" \
-            -H "X-Wake-Secret: ${{ secrets.WAKE_SECRET }}")
+            -H "X-Wake-Secret: ${{ secrets.WAKE_SECRET }}" \
+            || echo "000")
           echo "   /api/wake-and-check → HTTP $WAKE_RESP"
 
           echo "✅ Phase 3 complete"
