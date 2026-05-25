@@ -10,27 +10,27 @@
 
 services:
   monitor:
-    # --- Build & Image ---
     build:
       context: .
       dockerfile: Dockerfile
     image: shellty-pulse:latest
 
-    # --- Container settings ---
     container_name: shellty-pulse
     hostname: shellty-pulse
 
-    # --- Port mapping ---
     ports:
       - "${PORT:-5000}:5000"
 
-    # --- Environment variables ---
     environment:
       PORT: "5000"
       PING_INTERVAL: "900"
-      REQUEST_TIMEOUT: "10"
+      REQUEST_TIMEOUT: "90"
       MAX_SERVICES: "50"
       PYTHONUNBUFFERED: "1"
+      BUSINESS_HOURS_ENABLED: "false"
+      BUSINESS_HOURS_START: "8"
+      BUSINESS_HOURS_END: "20"
+      BUSINESS_HOURS_TIMEZONE: "Europe/Warsaw"
       SERVICES: >-
         [
           {"name": "KSeF Master",   "url": "https://ksef-master-backend.onrender.com/health",          "frontend_url": "https://ksef-master.netlify.app/"},
@@ -39,7 +39,6 @@ services:
           {"name": "SmartQuote AI", "url": "https://smartquote-backend-fzh5.onrender.com/api/health",   "frontend_url": "https://smartquote-ai.netlify.app/"}
         ]
 
-    # --- Health check ---
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -47,7 +46,6 @@ services:
       retries: 3
       start_period: 15s
 
-    # --- Security ---
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -55,21 +53,18 @@ services:
     security_opt:
       - no-new-privileges:true
 
-    # --- Logging ---
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
 
-    # --- Resource limits ---
     deploy:
       resources:
         limits:
           memory: 256M
           cpus: "0.50"
 
-    # --- Network ---
     networks:
       - app-network
 

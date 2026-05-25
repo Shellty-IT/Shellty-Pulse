@@ -1,31 +1,28 @@
 """
 Shellty Pulse — application entry point.
 """
+
 from __future__ import annotations
 
 import os
 
-# ← DODAJ TO NA POCZĄTKU
-try:
-    from dotenv import load_dotenv
-    load_dotenv()  # Ładuje zmienne z .env
-except ImportError:
-    pass  # python-dotenv nie zainstalowany (OK na production/Render)
-
 from pulse import create_app
-from pulse.scheduler import start_background_services
+from pulse.config import DISABLE_SCHEDULER
 
 _testing = os.environ.get("TESTING", "").lower() in ("1", "true")
 
 app = create_app(testing=_testing)
 
-if not _testing:
+if not _testing and not DISABLE_SCHEDULER:
+    from pulse.scheduler import start_background_services
+
     start_background_services()
 
-# ── Development server ───────────────────────────────────────────────────────
 if __name__ == "__main__":
-    from pulse.config import PORT
     import logging
+
+    from pulse.config import PORT
+
     logging.getLogger("shellty-pulse").info(
         "Development mode — Dashboard: http://0.0.0.0:%d", PORT
     )

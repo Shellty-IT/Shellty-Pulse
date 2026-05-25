@@ -20,12 +20,13 @@ env/
 ENV/
 
 # ============================================
-# IDE (PyCharm)
+# IDE
 # ============================================
 .idea/
 *.iml
 *.iws
 *.ipr
+.vscode/
 
 # ============================================
 # OS
@@ -40,7 +41,7 @@ desktop.ini
 docker-compose.override.yml
 
 # ============================================
-# Environment variables (bezpieczeństwo)
+# Environment variables
 # ============================================
 .env
 .env.local
@@ -52,10 +53,13 @@ docker-compose.override.yml
 *.log
 
 # ============================================
+# Claude Code
+# ============================================
+.claude/
+
+# ============================================
 # Misc
 # ============================================
 *.swp
 *.swo
 *~
-# Claude Code local settings"
-.gitignore
