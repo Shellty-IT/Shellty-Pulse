@@ -18,12 +18,10 @@
 
     <div id="overall-status" class="overall-status unknown">Loading...</div>
 
-    <!-- Banner widoczny tylko gdy check_running = true -->
     <div id="check-banner">
         <div class="banner-spinner"></div>
         <span>
-            <span class="banner-phase" id="banner-phase">Waking services…</span>
-            <span id="banner-countdown"></span>
+            <span class="banner-phase" id="banner-phase">Checking services…</span>
         </span>
     </div>
 
@@ -33,7 +31,7 @@
         <span class="legend-item"><span class="legend-dot slow"></span> Slow <span class="legend-desc">(&gt; 3s)</span></span>
         <span class="legend-item"><span class="legend-dot down"></span> Down <span class="legend-desc">(error/timeout)</span></span>
         <span class="legend-item"><span class="legend-dot unknown"></span> Unknown <span class="legend-desc">(not checked)</span></span>
-        <span class="legend-item"><span class="legend-dot disabled"></span> Disabled <span class="legend-desc">(skipped by wake)</span></span>
+        <span class="legend-item"><span class="legend-dot disabled"></span> Disabled <span class="legend-desc">(skipped)</span></span>
     </div>
 
     <div class="controls">
@@ -57,14 +55,14 @@
 
 <div class="business-hours">
     <div class="bh-header">
-        <h3>🕐 Business Hours - Keep-Alive</h3>
+        <h3>Business Hours</h3>
         <span id="bh-badge" class="bh-badge off">OFF</span>
     </div>
     <div class="bh-body">
         <div class="bh-control">
             <span class="bh-label">From:</span>
             <button class="bh-btn-adjust" onclick="adjustHour('bh-start', -1)">−</button>
-            <span id="bh-start" class="bh-hour-display">9</span>
+            <span id="bh-start" class="bh-hour-display">8</span>
             <button class="bh-btn-adjust" onclick="adjustHour('bh-start', 1)">+</button>
             <span class="bh-minutes">:00</span>
         </div>
@@ -72,7 +70,7 @@
         <div class="bh-control">
             <span class="bh-label">To:</span>
             <button class="bh-btn-adjust" onclick="adjustHour('bh-end', -1)">−</button>
-            <span id="bh-end" class="bh-hour-display">15</span>
+            <span id="bh-end" class="bh-hour-display">20</span>
             <button class="bh-btn-adjust" onclick="adjustHour('bh-end', 1)">+</button>
             <span class="bh-minutes">:00</span>
         </div>
@@ -80,22 +78,20 @@
         <button id="bh-toggle-btn" class="btn-bh-toggle enable" onclick="toggleBusinessHours()">Enable</button>
     </div>
     <p class="bh-note">
-        ℹ️ When enabled, GitHub Actions wakes <strong>all services</strong> every ~12 min within these hours (CET).
-        Outside these hours, all services sleep to save Render hours.
-        <br>
-        <strong>Note:</strong> Auto-Ping setting is a local fallback (not used on Render free tier).
+        When enabled, auto-ping only checks services within these hours (Europe/Warsaw timezone).
+        Outside business hours, services are not pinged automatically. Manual checks always work.
     </p>
 </div>
 
     <div class="add-service">
-        <h3>➕ Add New Service</h3>
+        <h3>Add New Service</h3>
         <div class="form-row">
             <input type="text" id="new-name" placeholder="Service name" maxlength="100"/>
             <input type="text" id="new-url" placeholder="Health check URL (https://...)" maxlength="2048"/>
             <input type="text" id="new-frontend-url" placeholder="Frontend URL — optional" maxlength="2048"/>
             <button class="btn primary" onclick="addService()">Add</button>
         </div>
-        <p class="add-note">⚠ Services added here are stored in memory and will be reset on application restart.</p>
+        <p class="add-note">Services added here are stored in memory and will be reset on container restart.</p>
     </div>
 
     <footer>

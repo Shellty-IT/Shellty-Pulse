@@ -1,8 +1,6 @@
 <script>
-// ── Stałe ────────────────────────────────────────────────────────────────────
-var POLL_IDLE        = 30000;   // poll co 30s gdy brak checku
-var POLL_ACTIVE      = 4000;    // poll co 4s gdy check trwa
-var COLD_START_WAIT  = 120;     // czas odliczania (120s — Render cold start ~90s)
+var POLL_IDLE   = 30000;
+var POLL_ACTIVE = 4000;
 
 var STATUS_CONFIG = {
     checking:    { icon: '🔵', label: 'Checking Services…'      },
@@ -14,20 +12,11 @@ var STATUS_CONFIG = {
     disabled:    { icon: '⏸',  label: 'Service Disabled'        }
 };
 
-// ── Stan lokalny ─────────────────────────────────────────────────────────────
-var _pollTimer           = null;
-var _countdownTimer      = null;
-var _checkStartedAt      = null;
-var _wasRunning          = false;
-var _initialLoadDone     = false;   // true gdy serwisy załadowane po raz pierwszy
-var _initialLoadAttempts = 0;
-var _maxInitialRetries   = 15;      // więcej prób przy cold start
-var _retryTimer          = null;    // aktywny timer retry (zapobiega duplikatom)
-var _countdownInterval   = null;
-var _bhUserEditing       = false;   // true gdy użytkownik modyfikuje godziny BH
-var _bhEditTimer         = null;    // auto-reset flagi edycji po 2 min braku aktywności
+var _pollTimer       = null;
+var _wasRunning      = false;
+var _bhUserEditing   = false;
+var _bhEditTimer     = null;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 function getStatusConfig(s) { return STATUS_CONFIG[s] || STATUS_CONFIG.unknown; }
 function rtClass(ms) { if (ms == null) return 'timeout'; if (ms < 1000) return 'fast'; if (ms <= 3000) return 'medium'; return 'slow'; }
 function rtText(ms)  { if (ms == null) return '—'; return ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(2) + 's'; }
@@ -36,21 +25,16 @@ function timeAgo(iso) { if (!iso) return 'never'; var d = (Date.now() - new Date
 function escapeHtml(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 function intervalLabel(s) { if (s >= 86400) return Math.round(s/86400)+'d'; if (s >= 3600) return Math.round(s/3600)+'h'; return Math.round(s/60)+' min'; }
 
-// ── Polling ───────────────────────────────────────────────────────────────────
 function _setPolling(interval) {
     if (_pollTimer) clearInterval(_pollTimer);
     _pollTimer = setInterval(fetchServices, interval);
 }
 
-// ── Banner + przycisk ─────────────────────────────────────────────────────────
 function _applyRunningState(running) {
     var btn    = document.getElementById('check-all-btn');
     var banner = document.getElementById('check-banner');
 
     if (running) {
-        if (btn.textContent.startsWith('⏳')) {
-            return;
-        }
         btn.disabled    = true;
         btn.textContent = '⟳ Checking…';
         banner.classList.add('visible');
@@ -63,68 +47,14 @@ function _applyRunningState(running) {
     }
 }
 
-// ── API calls ─────────────────────────────────────────────────────────────────
 async function fetchServices() {
-
     try {
         var res  = await fetch('/api/services');
         var data = await res.json();
-
-        if (!_initialLoadDone && data.services.length === 0) {
-            _initialLoadAttempts++;
-            if (_initialLoadAttempts <= _maxInitialRetries) {
-                // Backoff: 2s, 4s, 6s... max 10s
-                var delay = Math.min(2000 * _initialLoadAttempts, 10000);
-                console.log(
-                    '⏳ Services not ready yet (attempt ' +
-                    _initialLoadAttempts + '/' + _maxInitialRetries +
-                    '), retry in ' + delay + 'ms...'
-                );
-                _scheduleRetry(delay);
-                var grid = document.getElementById('services-grid');
-                if (grid && grid.querySelector('.loading') === null) {
-                    grid.innerHTML = '<div class="loading">⏳ Loading services...</div>';
-                }
-                return;
-            } else {
-                console.warn('⚠️ Max retries reached — startup.sh may have failed');
-                _initialLoadDone = true;
-            }
-        }
-
-        if (!_initialLoadDone && data.services.length > 0) {
-            _initialLoadDone = true;
-            _initialLoadAttempts = 0;
-            if (_retryTimer) {
-                clearTimeout(_retryTimer);
-                _retryTimer = null;
-            }
-            console.log('✅ Services loaded: ' + data.services.length);
-        }
-
         renderDashboard(data);
-
     } catch (err) {
         console.error('Fetch failed:', err);
-
-        if (!_initialLoadDone && _initialLoadAttempts <= _maxInitialRetries) {
-            _initialLoadAttempts++;
-            var delay = Math.min(3000 * _initialLoadAttempts, 10000);
-            console.log('❌ Fetch error, retry in ' + delay + 'ms...');
-            _scheduleRetry(delay);
-        }
     }
-}
-
-// Planuje retry bez duplikatów
-function _scheduleRetry(delay) {
-    if (_retryTimer) {
-        clearTimeout(_retryTimer);
-    }
-    _retryTimer = setTimeout(function() {
-        _retryTimer = null;
-        fetchServices();
-    }, delay);
 }
 
 async function checkAll() {
@@ -133,64 +63,23 @@ async function checkAll() {
 
     try {
         btn.disabled    = true;
-        btn.textContent = '🚀 Triggering…';
+        btn.textContent = '⟳ Checking…';
 
-        var res  = await fetch('/api/trigger-manual-check', { method: 'POST' });
-        var data = await res.json();
+        var res = await fetch('/api/check-all', { method: 'POST' });
 
         if (res.ok) {
-            var timeLeft = COLD_START_WAIT;
-            if (_countdownInterval) clearInterval(_countdownInterval);
-
-            _countdownInterval = setInterval(function() {
-                timeLeft--;
-                var minutes = Math.floor(timeLeft / 60);
-                var seconds = timeLeft % 60;
-                btn.textContent = '⏳ ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
-
-                if (timeLeft <= 0) {
-                    clearInterval(_countdownInterval);
-                    _countdownInterval = null;
-                    btn.textContent = '⟳ Check All Now';
-                    btn.disabled    = false;
-                }
-            }, 1000);
-
-            setTimeout(async function() {
-                console.log('✅ Countdown complete — refreshing statuses...');
-
-                var servicesRes  = await fetch('/api/services');
-                var servicesData = await servicesRes.json();
-                var services     = servicesData.services;
-
-                console.log('Checking ' + services.length + ' services individually...');
-
-                for (var i = 0; i < services.length; i++) {
-                    var svc = services[i];
-                    console.log('  Checking ' + svc.name + '...');
-                    try {
-                        await fetch('/api/services/' + svc.id + '/check', { method: 'POST' });
-                    } catch (err) {
-                        console.error('  Failed: ' + svc.name, err);
-                    }
-                    if (i < services.length - 1) {
-                        await new Promise(r => setTimeout(r, 500));
-                    }
-                }
-
-                console.log('✅ All services refreshed');
-                await fetchServices();
-
-            }, COLD_START_WAIT * 1000);
-
+            _setPolling(POLL_ACTIVE);
+        } else if (res.status === 409) {
+            // Already running
         } else {
-            alert('❌ Failed:\n' + (data.error || 'Unknown error'));
+            var data = await res.json();
+            alert('Failed: ' + (data.error || 'Unknown error'));
             btn.disabled    = false;
             btn.textContent = '⟳ Check All Now';
         }
     } catch (err) {
         console.error(err);
-        alert('❌ Error: ' + err.message);
+        alert('Error: ' + err.message);
         btn.disabled    = false;
         btn.textContent = '⟳ Check All Now';
     }
@@ -250,9 +139,6 @@ async function deleteService(id) {
 }
 
 async function toggleServiceEnabled(id) {
-    // Flip per-service kill switch. Backend persists the full disabled
-    // list to GitHub Variables (DISABLED_SERVICES) so it survives
-    // container restarts on Render.
     var btn = document.getElementById('toggle-btn-' + id);
     if (btn) { btn.disabled = true; btn.classList.add('busy'); }
     try {
@@ -264,7 +150,7 @@ async function toggleServiceEnabled(id) {
         await fetchServices();
     } catch (err) {
         console.error(err);
-        alert('❌ Error: ' + err.message);
+        alert('Error: ' + err.message);
     }
     if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
 }
@@ -288,15 +174,8 @@ async function toggleBusinessHours() {
     var start   = parseInt(document.getElementById('bh-start').textContent);
     var end     = parseInt(document.getElementById('bh-end').textContent);
 
-    if (isNaN(start) || isNaN(end)) {
-        alert('Invalid hour values.');
-        return;
-    }
-    if (start === end) {
-        alert('"From" and "To" must be different hours.');
-        return;
-    }
-
+    if (isNaN(start) || isNaN(end)) { alert('Invalid hour values.'); return; }
+    if (start === end) { alert('"From" and "To" must be different hours.'); return; }
 
     try {
         var res = await fetch('/api/business-hours', {
@@ -312,7 +191,6 @@ async function toggleBusinessHours() {
     } catch (err) { console.error(err); }
 }
 
-// ── Render ────────────────────────────────────────────────────────────────────
 function renderDashboard(data) {
     var services = data.services;
     var meta     = data.meta;
@@ -323,18 +201,8 @@ function renderDashboard(data) {
     oel.textContent = ocfg.icon + ' ' + ocfg.label;
 
     var running = meta.check_running;
-    if (running && !_wasRunning) {
-        if (!_checkStartedAt) _checkStartedAt = Date.now();
-    }
-    if (!running && _wasRunning) {
-        _checkStartedAt = null;
-    }
+    _applyRunningState(running);
     _wasRunning = running;
-
-    var btn = document.getElementById('check-all-btn');
-    if (!btn.textContent.startsWith('⏳')) {
-        _applyRunningState(running);
-    }
 
     var apb = document.getElementById('auto-ping-btn');
     if (meta.auto_ping_enabled) { apb.className = 'btn active';   apb.textContent = '⏱ Auto-Ping: ON';  }
@@ -368,20 +236,11 @@ function renderDashboard(data) {
 
     var grid = document.getElementById('services-grid');
     if (services.length === 0) {
-        if (!_initialLoadDone) {
-            grid.innerHTML = '<div class="loading">⏳ Loading services...</div>';
-        } else {
-            grid.innerHTML = '<div class="loading">No services configured. Add one below.</div>';
-        }
+        grid.innerHTML = '<div class="loading">No services configured. Add one below.</div>';
     } else {
         grid.innerHTML = services.map(function(svc) {
-            // Per-service enabled defaults to true if backend didn't send it.
             var isEnabled = svc.enabled !== false;
-            // Shellty Pulse itself — its health URL starts with the same
-            // origin the dashboard is served from. Never show the toggle
-            // for it: you can't disable the monitor itself.
             var isSelf = svc.url.indexOf(window.location.origin) === 0;
-            // When disabled, ignore real status icon — show pause badge.
             var effectiveStatus = isEnabled ? svc.status : 'disabled';
             var cfg      = getStatusConfig(effectiveStatus);
             var upPct    = svc.uptime_percent !== null ? svc.uptime_percent.toFixed(1) : '—';
@@ -391,21 +250,16 @@ function renderDashboard(data) {
                 ? '<a href="' + escapeHtml(svc.frontend_url) + '" target="_blank" rel="noopener noreferrer">'
                   + escapeHtml(svc.name) + ' <span class="link-arrow">↗</span></a>'
                 : escapeHtml(svc.name);
-            var disabledBadge = isEnabled
-                ? ''
-                : ' <span class="disabled-badge">disabled</span>';
+            var disabledBadge = isEnabled ? '' : ' <span class="disabled-badge">disabled</span>';
             var backendHtml = '<span class="backend-label">Backend:</span> '
                 + '<a href="' + escapeHtml(svc.url) + '" target="_blank" rel="noopener noreferrer" class="backend-link">'
                 + escapeHtml(svc.url) + '</a>';
-            // Toggle switch — hidden for Shellty Pulse itself.
             var toggleBtn = isSelf
                 ? ''
                 : '<button id="toggle-btn-' + svc.id + '" class="service-toggle' + (isEnabled ? ' on' : ' off') + '" '
                   + 'onclick="toggleServiceEnabled(\'' + svc.id + '\')" '
                   + 'title="' + (isEnabled ? 'Active — click to disable' : 'Disabled — click to enable') + '">'
                   + '<span class="toggle-knob"></span></button>';
-            // Check button — locked when service is disabled (defence in
-            // depth: backend also returns 409, but UI prevents the call).
             var checkBtn = isEnabled
                 ? '<button id="check-btn-' + svc.id + '" class="btn-icon" onclick="checkService(\'' + svc.id + '\')" title="Check now">⟳</button>'
                 : '<button class="btn-icon" disabled title="Enable service before checking">⟳</button>';
@@ -430,20 +284,15 @@ function renderDashboard(data) {
         }).join('');
     }
 
-    // Business hours — aktualizuj tylko gdy użytkownik nie edytuje (+/- przyciskami)
-    var bhStart = document.getElementById('bh-start');
-    var bhEnd   = document.getElementById('bh-end');
-
     if (!_bhUserEditing) {
-        bhStart.textContent = meta.business_hours_start;
-        bhEnd.textContent   = meta.business_hours_end;
+        document.getElementById('bh-start').textContent = meta.business_hours_start;
+        document.getElementById('bh-end').textContent   = meta.business_hours_end;
     }
 
     var bhEnabled = meta.business_hours_enabled;
     var bhBadge   = document.getElementById('bh-badge');
     var bhToggle  = document.getElementById('bh-toggle-btn');
 
-    // Label okna — obsługa przez północ
     var bhStartVal = meta.business_hours_start;
     var bhEndVal   = meta.business_hours_end;
     var bhLabel    = bhStartVal < bhEndVal
@@ -452,7 +301,7 @@ function renderDashboard(data) {
 
     if (bhEnabled) {
         bhBadge.className    = 'bh-badge on';
-        bhBadge.textContent  = '✅ ON · ' + bhLabel;
+        bhBadge.textContent  = 'ON · ' + bhLabel;
         bhToggle.className   = 'btn-bh-toggle disable';
         bhToggle.textContent = 'Disable';
     } else {
@@ -463,8 +312,6 @@ function renderDashboard(data) {
     }
 }
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-console.log('🚀 Shellty Pulse Dashboard starting...');
 fetchServices();
 _setPolling(POLL_IDLE);
 </script>
