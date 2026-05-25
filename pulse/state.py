@@ -9,15 +9,16 @@ Import pattern (always use module-level access):
     with state.services_lock:
         state.services.append(svc)
 """
+
 from __future__ import annotations
 
 import threading
 
 from pulse.config import (
-    PING_INTERVAL_DEFAULT,
     BUSINESS_HOURS_ENABLED_DEFAULT,
-    BUSINESS_HOURS_START_DEFAULT,
     BUSINESS_HOURS_END_DEFAULT,
+    BUSINESS_HOURS_START_DEFAULT,
+    PING_INTERVAL_DEFAULT,
 )
 
 # ── Thread synchronisation ───────────────────────────────────────────────────

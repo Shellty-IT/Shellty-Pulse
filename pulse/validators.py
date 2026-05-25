@@ -3,6 +3,7 @@ Input validation and SSRF protection.
 
 All functions are pure (no side effects).
 """
+
 from __future__ import annotations
 
 import ipaddress

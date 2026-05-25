@@ -1,15 +1,10 @@
 """
 Health-check engine.
 
-Cold-start strategy (Render free tier):
-  Split into two phases executed by GitHub Actions:
-    Phase 1 (fire)   — Send GET to all services simultaneously (kick cold start)
-    Phase 2 (wait)   — GitHub Actions sleeps 120s
-    Phase 3 (verify) — Check all services with short retry loops
-
-  Total: ~2.5 min for any number of services.
-  GitHub Actions controls timing — no worker blocking.
+On Oracle Cloud all checks happen locally via APScheduler or manual triggers.
+No fire/verify phases needed (services respond immediately on a 24/7 server).
 """
+
 from __future__ import annotations
 
 import logging
@@ -19,244 +14,149 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 import pytz
-
 import requests
 
 from pulse import state
-from pulse.config import REQUEST_TIMEOUT, BUSINESS_HOURS_TIMEZONE
+from pulse.config import BUSINESS_HOURS_TIMEZONE, REQUEST_TIMEOUT
 from pulse.models import determine_status
 
 logger = logging.getLogger("shellty-pulse")
 
-# ── Tuning constants ─────────────────────────────────────────────────────────
-_VERIFY_MAX_RETRIES: int = 4
-_VERIFY_429_WAIT:    int = 20
-_VERIFY_502_WAIT:    int = 15
+_RETRY_MAX: int = 3
+_RETRY_WAIT: int = 10
 
-# ── Concurrency guard ────────────────────────────────────────────────────────
-_check_lock    = threading.Lock()
+_check_lock = threading.Lock()
 _check_running = False
 
-# ── Public API ───────────────────────────────────────────────────────────────
-__all__ = [
-    "check_all_services",
-    "check_single_service",
-    "is_check_running",
-    "fire_all",
-    "verify_all",
-]
+_HEADERS = {
+    "User-Agent": "ShelltyPulse/1.0",
+    "Accept": "application/json, text/html, */*",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+}
 
 
 def is_check_running() -> bool:
-    """Return True if check is currently active."""
     return _check_running
 
 
 def set_check_running(value: bool) -> None:
-    """Set check running state (called by API routes)."""
     global _check_running
     _check_running = value
 
 
-# ── Shared HTTP headers ───────────────────────────────────────────────────────
-_HEADERS = {
-    "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept":          "application/json, text/html, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Cache-Control":   "no-cache",
-    "Connection":      "keep-alive",
-}
-
-
-# ── Phase 1: Fire ─────────────────────────────────────────────────────────────
-
-def _fire_single(service: dict) -> None:
-    """
-    Send one GET to kick the service's cold start. Ignores the response —
-    any status (429/502/503) means Render received it and is booting.
-    """
+def _check_single(service: dict) -> None:
+    """Full health check for one service with retries."""
     with state.services_lock:
-        url  = service["url"]
+        url = service["url"]
         name = service["name"]
-    try:
-        r = requests.get(url, timeout=10, headers=_HEADERS, allow_redirects=True)
-        logger.info("  🔥 %s → fire (HTTP %d)", name, r.status_code)
-    except Exception as exc:
-        logger.info("  🔥 %s → fire (no response yet: %s)", name, str(exc)[:60])
-
-
-def fire_all(snapshot: list[dict]) -> None:
-    """
-    Kick cold start on all enabled services simultaneously.
-    Disabled services are silently skipped.
-    """
-    active = [svc for svc in snapshot if svc.get("enabled", True)]
-    skipped = len(snapshot) - len(active)
-    if skipped:
-        logger.info(
-            "Phase 1 — %d service(s) skipped (disabled).", skipped,
-        )
-    if not active:
-        logger.info("Phase 1 — no active services to fire.")
-        return
-    logger.info("Phase 1 — firing all %d services in parallel...", len(active))
-    with ThreadPoolExecutor(max_workers=len(active)) as ex:
-        futures = {ex.submit(_fire_single, svc): svc["name"] for svc in active}
-        for f in as_completed(futures):
-            try:
-                f.result()
-            except Exception as exc:
-                logger.warning("  fire error for %s: %s", futures[f], exc)
-    logger.info("Phase 1 done — all fire requests sent.")
-
-
-# ── Phase 3: Verify ───────────────────────────────────────────────────────────
-
-def _verify_single(service: dict) -> None:
-    """
-    Full health check with retry. Called after cold start wait — services
-    should be warm. Updates service state atomically when done.
-    """
-    with state.services_lock:
-        url        = service["url"]
-        name       = service["name"]
         service_id = service["id"]
 
-    logger.info("  ✔ Verifying: %s", name)
-
-    success          = False
-    status           = "down"
+    success = False
+    status = "down"
     response_time_ms = None
 
-    for attempt in range(_VERIFY_MAX_RETRIES):
+    for attempt in range(_RETRY_MAX):
         try:
-            start    = time.time()
+            start = time.time()
             response = requests.get(
-                url, timeout=REQUEST_TIMEOUT, headers=_HEADERS, allow_redirects=True
+                url,
+                timeout=REQUEST_TIMEOUT,
+                headers=_HEADERS,
+                allow_redirects=True,
             )
             elapsed = time.time() - start
 
-            if response.status_code == 429:
-                if attempt < _VERIFY_MAX_RETRIES - 1:
+            if response.status_code in (429, 502, 503):
+                if attempt < _RETRY_MAX - 1:
                     logger.warning(
-                        "    ⏳ %s → 429, waiting %ds (attempt %d/%d)...",
-                        name, _VERIFY_429_WAIT, attempt + 1, _VERIFY_MAX_RETRIES,
+                        "  %s → HTTP %d, retry %d/%d in %ds...",
+                        name,
+                        response.status_code,
+                        attempt + 1,
+                        _RETRY_MAX,
+                        _RETRY_WAIT,
                     )
-                    time.sleep(_VERIFY_429_WAIT)
+                    time.sleep(_RETRY_WAIT)
                     continue
-                logger.error("    ✗ %s → still 429 after verify retries", name)
                 status = "down"
-                break
-
-            if response.status_code in (502, 503):
-                if attempt < _VERIFY_MAX_RETRIES - 1:
-                    logger.warning(
-                        "    ⏳ %s → %d (still cold?), waiting %ds (attempt %d/%d)...",
-                        name, response.status_code, _VERIFY_502_WAIT,
-                        attempt + 1, _VERIFY_MAX_RETRIES,
-                    )
-                    time.sleep(_VERIFY_502_WAIT)
-                    continue
-                logger.error("    ✗ %s → still %d after verify retries", name, response.status_code)
-                status           = "down"
                 response_time_ms = round(elapsed * 1000)
                 break
 
-            success          = response.status_code == 200
-            status           = determine_status(elapsed, success)
+            success = response.status_code == 200
+            status = determine_status(elapsed, success)
             response_time_ms = round(elapsed * 1000)
             if success:
-                logger.info("    ✓ %s → %s (HTTP %d, %dms)", name, status, response.status_code, response_time_ms)
+                logger.info(
+                    "  %s → %s (HTTP %d, %dms)",
+                    name,
+                    status,
+                    response.status_code,
+                    response_time_ms,
+                )
             else:
-                logger.warning("    ✗ %s → down (HTTP %d, %dms)", name, response.status_code, response_time_ms)
+                logger.warning(
+                    "  %s → down (HTTP %d, %dms)",
+                    name,
+                    response.status_code,
+                    response_time_ms,
+                )
             break
 
         except requests.exceptions.Timeout:
-            if attempt < _VERIFY_MAX_RETRIES - 1:
-                logger.warning("    ⏳ %s → timeout (attempt %d/%d), retrying in 15s...", name, attempt + 1, _VERIFY_MAX_RETRIES)
-                time.sleep(15)
+            if attempt < _RETRY_MAX - 1:
+                logger.warning(
+                    "  %s → timeout, retry %d/%d...",
+                    name,
+                    attempt + 1,
+                    _RETRY_MAX,
+                )
+                time.sleep(_RETRY_WAIT)
             else:
-                logger.error("    ✗ %s → timeout after verify retries", name)
+                logger.error("  %s → timeout after %d retries", name, _RETRY_MAX)
                 status = "down"
 
         except requests.exceptions.RequestException as exc:
-            if attempt < _VERIFY_MAX_RETRIES - 1:
-                logger.warning("    ⏳ %s → error (%s), retrying in 15s...", name, str(exc)[:80])
-                time.sleep(15)
+            if attempt < _RETRY_MAX - 1:
+                logger.warning(
+                    "  %s → error (%s), retry %d/%d...",
+                    name,
+                    str(exc)[:80],
+                    attempt + 1,
+                    _RETRY_MAX,
+                )
+                time.sleep(_RETRY_WAIT)
             else:
-                logger.error("    ✗ %s → error after verify retries: %s", name, exc)
+                logger.error("  %s → error after retries: %s", name, exc)
                 status = "down"
 
     with state.services_lock:
         for svc in state.services:
             if svc["id"] == service_id:
-                svc["status"]           = status
+                svc["status"] = status
                 svc["response_time_ms"] = response_time_ms
-                svc["last_check"]       = datetime.now(timezone.utc).isoformat()
-                svc["total_checks"]    += 1
+                svc["last_check"] = datetime.now(timezone.utc).isoformat()
+                svc["total_checks"] += 1
                 if success:
                     svc["successful_checks"] += 1
                 if svc["total_checks"] > 0:
                     svc["uptime_percent"] = round(
-                        (svc["successful_checks"] / svc["total_checks"]) * 100, 2
+                        (svc["successful_checks"] / svc["total_checks"]) * 100,
+                        2,
                     )
                 break
 
 
-def verify_all(snapshot: list[dict]) -> None:
-    """
-    Verify all enabled services in parallel after cold-start wait.
-    Disabled services are silently skipped (their stored status remains).
-    """
-    active = [svc for svc in snapshot if svc.get("enabled", True)]
-    skipped = len(snapshot) - len(active)
-    if skipped:
-        logger.info(
-            "Phase 3 — %d service(s) skipped (disabled).", skipped,
-        )
-    if not active:
-        logger.info("Phase 3 — no active services to verify.")
-        return
-    logger.info("Phase 3 — verifying all %d services in parallel...", len(active))
-    with ThreadPoolExecutor(max_workers=len(active)) as ex:
-        futures = {ex.submit(_verify_single, svc): svc["name"] for svc in active}
-        for f in as_completed(futures):
-            try:
-                f.result()
-            except Exception as exc:
-                logger.warning("  verify error for %s: %s", futures[f], exc)
-    logger.info("Phase 3 done — all services verified.")
-
-
-# ── Single-service manual check (dashboard ⟳ button per service) ─────────────
-
 def check_single_service(service: dict) -> None:
-    """
-    Manual single-service check from the dashboard row button.
-    Goes straight to verify (no fire phase) — user triggered, service
-    likely already warm or they want the raw current state.
-
-    Disabled services are silently skipped (UI also blocks the button,
-    this is defence in depth).
-    """
+    """Manual single-service check from the dashboard."""
     if not service.get("enabled", True):
-        logger.info(
-            "  ⏭ Skipping single-service check for %s — service disabled.",
-            service.get("name", "?"),
-        )
+        logger.info("  Skipping %s — service disabled.", service.get("name", "?"))
         return
-    _verify_single(service)
+    _check_single(service)
 
-
-# ── Legacy check-all (for backwards compatibility) ────────────────────────────
 
 def check_all_services() -> None:
-    """
-    DEPRECATED: Use fire_all() + wait + verify_all() instead.
-
-    This function still exists for backwards compatibility but is NOT
-    recommended — it blocks the worker for verify phase.
-    """
+    """Check all enabled services in parallel."""
     global _check_running
 
     if not _check_lock.acquire(blocking=False):
@@ -269,22 +169,31 @@ def check_all_services() -> None:
         with state.services_lock:
             snapshot = [svc.copy() for svc in state.services]
 
-        logger.warning(
-            "check_all_services() called — DEPRECATED, use fire_all + verify_all"
-        )
-        logger.info("Checking %d services (legacy mode)...", len(snapshot))
+        active = [svc for svc in snapshot if svc.get("enabled", True)]
+        skipped = len(snapshot) - len(active)
 
-        if not snapshot:
-            logger.info("No services configured.")
+        if not active:
+            logger.info("No active services to check.")
             return
 
-        # verify_all() applies the enabled filter internally.
-        verify_all(snapshot)
+        logger.info(
+            "Checking %d services (%d skipped)...",
+            len(active),
+            skipped,
+        )
+
+        with ThreadPoolExecutor(max_workers=len(active)) as ex:
+            futures = {ex.submit(_check_single, svc): svc["name"] for svc in active}
+            for f in as_completed(futures):
+                try:
+                    f.result()
+                except Exception as exc:
+                    logger.warning("Check error for %s: %s", futures[f], exc)
 
         with state.services_lock:
             state.last_check_time = datetime.now(timezone.utc).isoformat()
 
-        logger.info("Legacy check complete.")
+        logger.info("All checks complete.")
 
     finally:
         _check_running = False
@@ -294,35 +203,36 @@ def check_all_services() -> None:
 def scheduled_check() -> None:
     """Scheduler callback — honours auto_ping_enabled and business hours."""
     with state.services_lock:
-        enabled    = state.auto_ping_enabled
+        enabled = state.auto_ping_enabled
         bh_enabled = state.business_hours_enabled
-        bh_start   = state.business_hours_start
-        bh_end     = state.business_hours_end
+        bh_start = state.business_hours_start
+        bh_end = state.business_hours_end
 
     if not enabled:
-        logger.info("Auto-ping disabled — skipping scheduled check.")
         return
 
     if bh_enabled:
         try:
-            tz  = pytz.timezone(BUSINESS_HOURS_TIMEZONE)
+            tz = pytz.timezone(BUSINESS_HOURS_TIMEZONE)
             now = datetime.now(tz)
             cur = now.hour * 60 + now.minute
-            ws  = bh_start * 60
-            we  = bh_end * 60 + 15  # 15 min buffer (matches GitHub Actions logic)
+            ws = bh_start * 60
+            we = bh_end * 60
 
             if bh_start < bh_end:
                 in_window = ws <= cur < we
-            else:  # overnight window e.g. 23:00–01:00
+            else:
                 in_window = cur >= ws or cur < we
 
             if not in_window:
                 logger.info(
-                    "Auto-ping: outside business hours (%02d:00–%02d:00 %s) — skipping.",
-                    bh_start, bh_end, BUSINESS_HOURS_TIMEZONE,
+                    "Outside business hours (%02d:00-%02d:00 %s) — skipping.",
+                    bh_start,
+                    bh_end,
+                    BUSINESS_HOURS_TIMEZONE,
                 )
                 return
         except Exception as exc:
-            logger.warning("Auto-ping: BH timezone check failed (%s) — proceeding.", exc)
+            logger.warning("BH timezone check failed (%s) — proceeding.", exc)
 
     check_all_services()
