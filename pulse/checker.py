@@ -209,6 +209,7 @@ def scheduled_check() -> None:
         bh_end = state.business_hours_end
 
     if not enabled:
+        logger.debug("Auto-ping disabled — skipping scheduled check.")
         return
 
     if bh_enabled:
@@ -226,12 +227,23 @@ def scheduled_check() -> None:
 
             if not in_window:
                 logger.info(
-                    "Outside business hours (%02d:00-%02d:00 %s) — skipping.",
+                    "Outside business hours (%02d:00-%02d:00 %s, now %02d:%02d) — skipping.",
                     bh_start,
                     bh_end,
                     BUSINESS_HOURS_TIMEZONE,
+                    now.hour,
+                    now.minute,
                 )
                 return
+            else:
+                logger.debug(
+                    "Within business hours (%02d:00-%02d:00 %s, now %02d:%02d) — proceeding.",
+                    bh_start,
+                    bh_end,
+                    BUSINESS_HOURS_TIMEZONE,
+                    now.hour,
+                    now.minute,
+                )
         except Exception as exc:
             logger.warning("BH timezone check failed (%s) — proceeding.", exc)
 

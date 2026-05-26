@@ -23,14 +23,16 @@ services:
 
     environment:
       PORT: "5000"
-      PING_INTERVAL: "900"
+      PING_INTERVAL: "720"
       REQUEST_TIMEOUT: "90"
       MAX_SERVICES: "50"
       PYTHONUNBUFFERED: "1"
+      AUTO_PING_ENABLED: "true"
       BUSINESS_HOURS_ENABLED: "false"
       BUSINESS_HOURS_START: "8"
       BUSINESS_HOURS_END: "20"
       BUSINESS_HOURS_TIMEZONE: "Europe/Warsaw"
+      DATA_DIR: "/data"
       SERVICES: >-
         [
           {"name": "KSeF Master",    "url": "https://ksef-master-backend.onrender.com/health",          "frontend_url": "https://ksef-master.netlify.app/"},
@@ -47,6 +49,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
+
+    volumes:
+      - shellty-pulse-data:/data
 
     restart: unless-stopped
     read_only: true
@@ -73,3 +78,6 @@ services:
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  shellty-pulse-data:

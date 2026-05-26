@@ -15,11 +15,18 @@ VERSION = "1.0.0"
 PORT = int(os.environ.get("PORT", 5000))
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 90))
 MAX_SERVICES = int(os.environ.get("MAX_SERVICES", 50))
-PING_INTERVAL_DEFAULT = int(os.environ.get("PING_INTERVAL", 900))
+PING_INTERVAL_DEFAULT = int(os.environ.get("PING_INTERVAL", 720))
 SERVICES_JSON = os.environ.get("SERVICES", "[]")
+DATA_DIR: str = os.environ.get("DATA_DIR", "/data")
 
 # ── Scheduler control ───────────────────────────────────────────────────────
 DISABLE_SCHEDULER = os.environ.get("DISABLE_SCHEDULER", "").lower() in ("1", "true")
+AUTO_PING_ENABLED_DEFAULT: bool = os.environ.get(
+    "AUTO_PING_ENABLED", "false"
+).lower() in (
+    "1",
+    "true",
+)
 
 # ── Input length limits ──────────────────────────────────────────────────────
 MAX_NAME_LENGTH = 100
@@ -28,6 +35,7 @@ MAX_URL_LENGTH = 2048
 # ── Available ping intervals: seconds → human label ─────────────────────────
 AVAILABLE_INTERVALS: dict[int, str] = {
     600: "10 min",
+    720: "12 min",
     900: "15 min",
     1800: "30 min",
     3600: "1 hour",

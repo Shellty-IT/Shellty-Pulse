@@ -15,6 +15,7 @@ from __future__ import annotations
 import threading
 
 from pulse.config import (
+    AUTO_PING_ENABLED_DEFAULT,
     BUSINESS_HOURS_ENABLED_DEFAULT,
     BUSINESS_HOURS_END_DEFAULT,
     BUSINESS_HOURS_START_DEFAULT,
@@ -30,7 +31,7 @@ services: list[dict] = []
 
 # ── Runtime settings (always access under services_lock) ─────────────────────
 ping_interval: int = PING_INTERVAL_DEFAULT
-auto_ping_enabled: bool = False
+auto_ping_enabled: bool = AUTO_PING_ENABLED_DEFAULT
 last_check_time: str | None = None
 
 # ── Business Hours settings ──────────────────────────────────────────────────

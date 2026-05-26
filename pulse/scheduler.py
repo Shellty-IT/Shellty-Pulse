@@ -18,7 +18,6 @@ from pulse import state
 from pulse.config import (
     DISABLE_SCHEDULER,
     MAX_SERVICES,
-    PING_INTERVAL_DEFAULT,
     PORT,
     REQUEST_TIMEOUT,
     SERVICES_JSON,
@@ -88,7 +87,7 @@ def load_services_from_env() -> None:
 
 
 def start_background_services() -> None:
-    """Seed services from env and start APScheduler."""
+    """Seed services from env, restore persisted state, and start APScheduler."""
     global scheduler
 
     logger.info("=" * 50)
@@ -97,15 +96,30 @@ def start_background_services() -> None:
     logger.info("=" * 50)
     logger.info("Configuration:")
     logger.info("  PORT:            %d", PORT)
-    logger.info(
-        "  PING_INTERVAL:   %d seconds (%d min)",
-        PING_INTERVAL_DEFAULT,
-        PING_INTERVAL_DEFAULT // 60,
-    )
     logger.info("  REQUEST_TIMEOUT: %d seconds", REQUEST_TIMEOUT)
     logger.info("  MAX_SERVICES:    %d", MAX_SERVICES)
 
     load_services_from_env()
+
+    from pulse.persistence import load_state
+
+    load_state(state)
+
+    logger.info(
+        "  PING_INTERVAL:   %d seconds (%d min)",
+        state.ping_interval,
+        state.ping_interval // 60,
+    )
+    logger.info(
+        "  AUTO_PING:       %s",
+        "enabled" if state.auto_ping_enabled else "disabled",
+    )
+    logger.info(
+        "  BUSINESS_HOURS:  %s (%02d:00-%02d:00)",
+        "enabled" if state.business_hours_enabled else "disabled",
+        state.business_hours_start,
+        state.business_hours_end,
+    )
 
     if DISABLE_SCHEDULER:
         logger.info("DISABLE_SCHEDULER=true — scheduler will not start.")

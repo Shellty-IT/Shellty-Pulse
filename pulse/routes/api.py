@@ -23,6 +23,7 @@ from pulse.config import (
     MAX_URL_LENGTH,
 )
 from pulse.models import create_service, get_overall_status
+from pulse.persistence import save_state
 from pulse.validators import validate_service_payload
 
 logger = logging.getLogger("shellty-pulse")
@@ -183,6 +184,7 @@ def toggle_service_enabled_route(service_id: str):
         snapshot_svc["name"],
         snapshot_svc["enabled"],
     )
+    save_state(state)
     return jsonify(snapshot_svc), 200
 
 
@@ -237,6 +239,7 @@ def toggle_auto_ping_route():
 
     label = "enabled" if new_state else "disabled"
     logger.info("Auto-ping toggled: %s", label)
+    save_state(state)
     return jsonify(
         {
             "auto_ping_enabled": new_state,
@@ -281,6 +284,7 @@ def set_ping_interval_route():
 
     label = AVAILABLE_INTERVALS[new_interval]
     logger.info("Ping interval changed to %s (%ds)", label, new_interval)
+    save_state(state)
     return jsonify(
         {
             "interval": new_interval,
@@ -346,6 +350,7 @@ def set_business_hours_route():
         status_label,
         label if enabled else "—",
     )
+    save_state(state)
 
     return jsonify(
         {
