@@ -201,50 +201,64 @@ def check_all_services() -> None:
 
 
 def scheduled_check() -> None:
-    """Scheduler callback — honours auto_ping_enabled and business hours."""
+    """Auto-ping scheduler callback — runs at ping_interval if auto_ping_enabled."""
     with state.services_lock:
         enabled = state.auto_ping_enabled
-        bh_enabled = state.business_hours_enabled
-        bh_start = state.business_hours_start
-        bh_end = state.business_hours_end
 
     if not enabled:
         logger.debug("Auto-ping disabled — skipping scheduled check.")
         return
 
-    if bh_enabled:
-        try:
-            tz = pytz.timezone(BUSINESS_HOURS_TIMEZONE)
-            now = datetime.now(tz)
-            cur = now.hour * 60 + now.minute
-            ws = bh_start * 60
-            we = bh_end * 60
+    check_all_services()
 
-            if bh_start < bh_end:
-                in_window = ws <= cur < we
-            else:
-                in_window = cur >= ws or cur < we
 
-            if not in_window:
-                logger.info(
-                    "Outside business hours (%02d:00-%02d:00 %s, now %02d:%02d) — skipping.",
-                    bh_start,
-                    bh_end,
-                    BUSINESS_HOURS_TIMEZONE,
-                    now.hour,
-                    now.minute,
-                )
-                return
-            else:
-                logger.debug(
-                    "Within business hours (%02d:00-%02d:00 %s, now %02d:%02d) — proceeding.",
-                    bh_start,
-                    bh_end,
-                    BUSINESS_HOURS_TIMEZONE,
-                    now.hour,
-                    now.minute,
-                )
-        except Exception as exc:
-            logger.warning("BH timezone check failed (%s) — proceeding.", exc)
+def business_hours_check() -> None:
+    """Business hours keepalive callback — runs every 12 min, independent of auto-ping.
+
+    Pings all enabled services during the configured BH window.
+    Does nothing outside the window or when BH is disabled.
+    """
+    with state.services_lock:
+        bh_enabled = state.business_hours_enabled
+        bh_start = state.business_hours_start
+        bh_end = state.business_hours_end
+
+    if not bh_enabled:
+        return
+
+    try:
+        tz = pytz.timezone(BUSINESS_HOURS_TIMEZONE)
+        now = datetime.now(tz)
+        cur = now.hour * 60 + now.minute
+        ws = bh_start * 60
+        we = bh_end * 60
+
+        if bh_start < bh_end:
+            in_window = ws <= cur < we
+        else:
+            in_window = cur >= ws or cur < we
+
+        if not in_window:
+            logger.debug(
+                "BH keepalive: outside window (%02d:00-%02d:00 %s, now %02d:%02d) — skipping.",
+                bh_start,
+                bh_end,
+                BUSINESS_HOURS_TIMEZONE,
+                now.hour,
+                now.minute,
+            )
+            return
+
+        logger.debug(
+            "BH keepalive: within window (%02d:00-%02d:00 %s, now %02d:%02d) — pinging.",
+            bh_start,
+            bh_end,
+            BUSINESS_HOURS_TIMEZONE,
+            now.hour,
+            now.minute,
+        )
+    except Exception as exc:
+        logger.warning("BH timezone check failed (%s) — skipping BH keepalive.", exc)
+        return
 
     check_all_services()

@@ -79,8 +79,9 @@
         <button id="bh-toggle-btn" class="btn-bh-toggle enable" onclick="toggleBusinessHours()">Enable</button>
     </div>
     <p class="bh-note">
-        When enabled, auto-ping only checks services within these hours (Europe/Warsaw timezone).
-        Outside business hours, services are not pinged automatically. Manual checks always work.
+        When enabled, all active services are pinged every 12 minutes within these hours (Europe/Warsaw timezone) —
+        independent of the auto-ping setting. Outside business hours this keepalive is skipped.
+        Manual checks always work.
     </p>
 </div>
 

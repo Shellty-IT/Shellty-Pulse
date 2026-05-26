@@ -125,7 +125,7 @@ def start_background_services() -> None:
         logger.info("DISABLE_SCHEDULER=true — scheduler will not start.")
         return
 
-    from pulse.checker import scheduled_check
+    from pulse.checker import business_hours_check, scheduled_check
 
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(
@@ -133,13 +133,22 @@ def start_background_services() -> None:
         trigger="interval",
         seconds=state.ping_interval,
         id="health_check_job",
-        name="Periodic Health Check",
+        name="Auto-Ping Health Check",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        func=business_hours_check,
+        trigger="interval",
+        seconds=720,
+        id="business_hours_job",
+        name="Business Hours Keepalive",
         replace_existing=True,
     )
     scheduler.start()
     logger.info(
-        "Scheduler started — auto_ping %s, interval %ds.",
+        "Scheduler started — auto_ping %s (%ds), BH keepalive %s (720s).",
         "enabled" if state.auto_ping_enabled else "disabled",
         state.ping_interval,
+        "enabled" if state.business_hours_enabled else "disabled",
     )
     logger.info("=" * 50)
