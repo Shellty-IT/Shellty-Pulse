@@ -9,96 +9,104 @@
     {% include 'includes/styles.css.html' %}
 </head>
 <body>
-<div class="container">
-    <header>
+<div class="wrap">
+
+    <header class="brand">
         {% include 'includes/logo.svg.html' %}
-        <h1>Shell<span class="brand-accent">ty</span> Pulse</h1>
-        <p class="subtitle">Service Health Monitor</p>
+        <h1>Shell<span class="ty">ty</span> Pulse</h1>
+        <div class="sub">Service Health Monitor</div>
     </header>
 
-    <div id="overall-status" class="overall-status unknown">Loading...</div>
-
-    <div id="check-banner">
-        <div class="banner-spinner"></div>
-        <span>
-            <span class="banner-phase" id="banner-phase">Checking services…</span>
-        </span>
+    <div id="overall-status" class="banner unknown" role="status" aria-live="polite">
+        <span class="dot"></span>
+        <span>Status Unknown</span>
     </div>
 
-    <div class="status-legend">
-        <span class="legend-item"><span class="legend-dot operational"></span> Operational <span class="legend-desc">(&lt; 1s)</span></span>
-        <span class="legend-item"><span class="legend-dot degraded"></span> Degraded <span class="legend-desc">(1–3s)</span></span>
-        <span class="legend-item"><span class="legend-dot slow"></span> Slow <span class="legend-desc">(&gt; 3s)</span></span>
-        <span class="legend-item"><span class="legend-dot down"></span> Down <span class="legend-desc">(error/timeout)</span></span>
-        <span class="legend-item"><span class="legend-dot unknown"></span> Unknown <span class="legend-desc">(not checked)</span></span>
-        <span class="legend-item"><span class="legend-dot disabled"></span> Disabled <span class="legend-desc">(skipped)</span></span>
+    <div class="legend">
+        <span class="item"><span class="ld op"></span>Operational <span class="th">(&lt; 1s)</span></span>
+        <span class="item"><span class="ld deg"></span>Degraded <span class="th">(1–3s)</span></span>
+        <span class="item"><span class="ld slow"></span>Slow <span class="th">(&gt; 3s)</span></span>
+        <span class="item"><span class="ld down"></span>Down <span class="th">(error/timeout)</span></span>
+        <span class="item"><span class="ld unk"></span>Unknown <span class="th">(not checked)</span></span>
+        <span class="item"><span class="ld dis"></span>Disabled <span class="th">(skipped)</span></span>
     </div>
 
     <div class="controls">
-        <button id="check-all-btn" class="btn primary" onclick="checkAll()">⟳ Check All Now</button>
-        <button id="auto-ping-btn" class="btn inactive" onclick="toggleAutoPing()">⏱ Auto-Ping: OFF</button>
-        <div class="interval-selector">
-            <span class="interval-label">Interval:</span>
-            <button class="interval-btn" data-interval="600" onclick="setPingInterval(600)">10 min</button>
-            <button class="interval-btn" data-interval="720" onclick="setPingInterval(720)">12 min</button>
-            <button class="interval-btn" data-interval="900" onclick="setPingInterval(900)">15 min</button>
-            <button class="interval-btn" data-interval="1800" onclick="setPingInterval(1800)">30 min</button>
-            <button class="interval-btn" data-interval="3600" onclick="setPingInterval(3600)">1 hour</button>
-            <button class="interval-btn" data-interval="86400" onclick="setPingInterval(86400)">24h</button>
-            <button class="interval-btn" data-interval="172800" onclick="setPingInterval(172800)">48h</button>
+        <button id="check-all-btn" class="btn-primary green" type="button" onclick="checkAll()">
+            <svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+            Check All Now
+        </button>
+        <button id="auto-ping-btn" class="btn-ghost" type="button" onclick="toggleAutoPing()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 15 15"/></svg>
+            Auto-Ping: OFF
+        </button>
+        <span class="label">Interval:</span>
+        <div class="pills">
+            <button class="pill" data-interval="600"    type="button" onclick="setPingInterval(600)">10 min</button>
+            <button class="pill" data-interval="720"    type="button" onclick="setPingInterval(720)">12 min</button>
+            <button class="pill" data-interval="900"    type="button" onclick="setPingInterval(900)">15 min</button>
+            <button class="pill" data-interval="1800"   type="button" onclick="setPingInterval(1800)">30 min</button>
+            <button class="pill" data-interval="3600"   type="button" onclick="setPingInterval(3600)">1 hour</button>
+            <button class="pill" data-interval="86400"  type="button" onclick="setPingInterval(86400)">24h</button>
+            <button class="pill" data-interval="172800" type="button" onclick="setPingInterval(172800)">48h</button>
         </div>
-        <div id="check-info" class="check-info">Loading...</div>
+    </div>
+    <div id="check-info" class="last-check">Loading…</div>
+
+    <h2 class="section-title"><span class="accent">//</span> Monitored services</h2>
+    <div id="services-grid" class="services">
+        <div class="loading">Loading services…</div>
     </div>
 
-    <div id="services-grid" class="services-grid">
-        <div class="loading">Loading services...</div>
-    </div>
-
-<div class="business-hours">
-    <div class="bh-header">
-        <h3>Business Hours</h3>
-        <span id="bh-badge" class="bh-badge off">OFF</span>
-    </div>
-    <div class="bh-body">
-        <div class="bh-control">
+    <section class="panel">
+        <div class="panel-head">
+            <div class="panel-title">Business Hours</div>
+            <div class="bh-head-right">
+                <span id="bh-badge" class="bh-badge off">OFF</span>
+                <button id="bh-toggle-btn" class="switch sm off" type="button"
+                        onclick="toggleBusinessHours()" aria-label="Toggle business hours"></button>
+            </div>
+        </div>
+        <div class="bh-row">
             <span class="bh-label">From:</span>
-            <button class="bh-btn-adjust" onclick="adjustHour('bh-start', -1)">−</button>
-            <span id="bh-start" class="bh-hour-display">8</span>
-            <button class="bh-btn-adjust" onclick="adjustHour('bh-start', 1)">+</button>
-            <span class="bh-minutes">:00</span>
-        </div>
-        <span class="bh-separator">—</span>
-        <div class="bh-control">
+            <div class="stepper">
+                <button class="step-btn" type="button" onclick="adjustHour('bh-start', -1)" aria-label="Decrease">−</button>
+                <span id="bh-start" class="num">8</span>
+                <button class="step-btn" type="button" onclick="adjustHour('bh-start', 1)"  aria-label="Increase">+</button>
+            </div>
+            <span class="bh-mins">:00</span>
+            <span class="bh-sep">—</span>
             <span class="bh-label">To:</span>
-            <button class="bh-btn-adjust" onclick="adjustHour('bh-end', -1)">−</button>
-            <span id="bh-end" class="bh-hour-display">20</span>
-            <button class="bh-btn-adjust" onclick="adjustHour('bh-end', 1)">+</button>
-            <span class="bh-minutes">:00</span>
+            <div class="stepper">
+                <button class="step-btn" type="button" onclick="adjustHour('bh-end', -1)" aria-label="Decrease">−</button>
+                <span id="bh-end" class="num">20</span>
+                <button class="step-btn" type="button" onclick="adjustHour('bh-end', 1)"  aria-label="Increase">+</button>
+            </div>
+            <span class="bh-mins">:00</span>
+            <span class="bh-tz">CET</span>
         </div>
-        <span class="bh-tz">CET</span>
-        <button id="bh-toggle-btn" class="btn-bh-toggle enable" onclick="toggleBusinessHours()">Enable</button>
-    </div>
-    <p class="bh-note">
-        When enabled, all active services are pinged every 12 minutes within these hours (Europe/Warsaw timezone) —
-        independent of the auto-ping setting. Outside business hours this keepalive is skipped.
-        Manual checks always work.
-    </p>
-</div>
+        <p class="bh-desc">When enabled, all active services are pinged every 12 minutes within these hours
+            (Europe/Warsaw timezone) — independent of the auto-ping setting.
+            Outside business hours this keepalive is skipped. Manual checks always work.</p>
+    </section>
 
-    <div class="add-service">
-        <h3>Add New Service</h3>
-        <div class="form-row">
-            <input type="text" id="new-name" placeholder="Service name" maxlength="100"/>
-            <input type="text" id="new-url" placeholder="Health check URL (https://...)" maxlength="2048"/>
-            <input type="text" id="new-frontend-url" placeholder="Frontend URL — optional" maxlength="2048"/>
-            <button class="btn primary" onclick="addService()">Add</button>
+    <section class="panel">
+        <div class="panel-head">
+            <div class="panel-title"><span class="plus">+</span> Add New Service</div>
         </div>
-        <p class="add-note">Services added here are stored in memory and will be reset on container restart.</p>
-    </div>
+        <div class="form-grid">
+            <input id="new-name"         class="input"      type="text" placeholder="Service name"                        maxlength="100"/>
+            <input id="new-url"          class="input mono" type="text" placeholder="Health check URL (https://…)"        maxlength="2048"/>
+            <input id="new-frontend-url" class="input mono" type="text" placeholder="Frontend URL — optional"             maxlength="2048"/>
+            <button class="btn-primary" type="button" onclick="addService()">Add</button>
+        </div>
+        <p class="form-note"><span class="warn">⚠</span> Services added here are stored in memory and will be reset on container restart.</p>
+    </section>
 
     <footer>
         Service Health Monitor by <a href="https://shellty-it.github.io" target="_blank">Shellty IT</a>
     </footer>
+
 </div>
 
 {% include 'includes/scripts.js.html' %}

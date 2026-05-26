@@ -2,28 +2,54 @@
 var POLL_IDLE   = 30000;
 var POLL_ACTIVE = 4000;
 
-var STATUS_CONFIG = {
-    checking:    { icon: '🔵', label: 'Checking Services…'      },
-    operational: { icon: '🟢', label: 'All Systems Operational' },
-    degraded:    { icon: '🟡', label: 'Performance Degraded'    },
-    slow:        { icon: '🟠', label: 'Slow Response Detected'  },
-    down:        { icon: '🔴', label: 'Service Outage Detected' },
-    unknown:     { icon: '⚪', label: 'Status Unknown'          },
-    disabled:    { icon: '⏸',  label: 'Service Disabled'        }
+var _pollTimer     = null;
+var _bhUserEditing = false;
+var _bhEditTimer   = null;
+
+/* ── SVG icon snippets ── */
+var _ICO_REFRESH = '<svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>';
+var _ICO_CLOCK   = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 15 15"/></svg>';
+var _ICO_SPIN    = '<svg class="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>';
+var _ICO_REMOVE  = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+
+/* ── Banner data per status ── */
+var _BANNER = {
+    checking:    { cls: 'checking', text: 'Checking Services…'   },
+    operational: { cls: 'ok',       text: 'All Systems Operational'   },
+    degraded:    { cls: 'deg',      text: 'Performance Degraded'      },
+    slow:        { cls: 'slow',     text: 'Slow Response Detected'    },
+    down:        { cls: '',         text: 'Service Outage Detected'   },
+    unknown:     { cls: 'unknown',  text: 'Status Unknown'            },
+    disabled:    { cls: 'unknown',  text: 'All Services Disabled'     }
 };
 
-var _pollTimer       = null;
-var _wasRunning      = false;
-var _bhUserEditing   = false;
-var _bhEditTimer     = null;
+/* ── Map service status → card CSS class ── */
+var _SVC_CLS = {
+    operational: 'op',
+    degraded:    'deg',
+    slow:        'slow',
+    down:        '',
+    unknown:     'unk',
+    checking:    ''
+};
 
-function getStatusConfig(s) { return STATUS_CONFIG[s] || STATUS_CONFIG.unknown; }
-function rtClass(ms) { if (ms == null) return 'timeout'; if (ms < 1000) return 'fast'; if (ms <= 3000) return 'medium'; return 'slow'; }
+/* ── Helpers ── */
 function rtText(ms)  { if (ms == null) return '—'; return ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(2) + 's'; }
-function uptimeColor(p) { if (p >= 95) return '#3fb950'; if (p >= 80) return '#d29922'; if (p >= 50) return '#db6d28'; return '#f85149'; }
-function timeAgo(iso) { if (!iso) return 'never'; var d = (Date.now() - new Date(iso).getTime())/1000; if (d < 60) return Math.round(d)+'s ago'; if (d < 3600) return Math.round(d/60)+' min ago'; return Math.round(d/3600)+'h ago'; }
+function uptimeColor(p) { if (p >= 95) return '#22c55e'; if (p >= 80) return '#f59e0b'; if (p >= 50) return '#fb923c'; return '#ef4444'; }
+function timeAgo(iso) {
+    if (!iso) return 'never';
+    var d = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (d < 60)   return Math.round(d) + 's ago';
+    if (d < 3600) return Math.round(d / 60) + ' min ago';
+    return Math.round(d / 3600) + 'h ago';
+}
 function escapeHtml(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
-function intervalLabel(s) { if (s >= 86400) return Math.round(s/86400)+'d'; if (s >= 3600) return Math.round(s/3600)+'h'; return Math.round(s/60)+' min'; }
+function intervalLabel(s) {
+    if (s >= 172800) return '48h';
+    if (s >= 86400)  return '24h';
+    if (s >= 3600)   return Math.round(s / 3600) + 'h';
+    return Math.round(s / 60) + ' min';
+}
 
 function _setPolling(interval) {
     if (_pollTimer) clearInterval(_pollTimer);
@@ -31,22 +57,19 @@ function _setPolling(interval) {
 }
 
 function _applyRunningState(running) {
-    var btn    = document.getElementById('check-all-btn');
-    var banner = document.getElementById('check-banner');
-
+    var btn = document.getElementById('check-all-btn');
     if (running) {
-        btn.disabled    = true;
-        btn.textContent = '⟳ Checking…';
-        banner.classList.add('visible');
+        btn.disabled  = true;
+        btn.innerHTML = _ICO_REFRESH + ' Checking…';
         _setPolling(POLL_ACTIVE);
     } else {
-        btn.disabled    = false;
-        btn.textContent = '⟳ Check All Now';
-        banner.classList.remove('visible');
+        btn.disabled  = false;
+        btn.innerHTML = _ICO_REFRESH + ' Check All Now';
         _setPolling(POLL_IDLE);
     }
 }
 
+/* ── Fetch & render ── */
 async function fetchServices() {
     try {
         var res  = await fetch('/api/services');
@@ -60,28 +83,26 @@ async function fetchServices() {
 async function checkAll() {
     var btn = document.getElementById('check-all-btn');
     if (btn.disabled) return;
-
     try {
-        btn.disabled    = true;
-        btn.textContent = '⟳ Checking…';
+        btn.disabled  = true;
+        btn.innerHTML = _ICO_REFRESH + ' Checking…';
 
         var res = await fetch('/api/check-all', { method: 'POST' });
-
         if (res.ok) {
             _setPolling(POLL_ACTIVE);
         } else if (res.status === 409) {
-            // Already running
+            /* already running — fetchServices will pick it up */
         } else {
             var data = await res.json();
             alert('Failed: ' + (data.error || 'Unknown error'));
-            btn.disabled    = false;
-            btn.textContent = '⟳ Check All Now';
+            btn.disabled  = false;
+            btn.innerHTML = _ICO_REFRESH + ' Check All Now';
         }
     } catch (err) {
         console.error(err);
         alert('Error: ' + err.message);
-        btn.disabled    = false;
-        btn.textContent = '⟳ Check All Now';
+        btn.disabled  = false;
+        btn.innerHTML = _ICO_REFRESH + ' Check All Now';
     }
 }
 
@@ -165,14 +186,14 @@ function adjustHour(elementId, delta) {
     elem.textContent = val;
     _bhUserEditing = true;
     if (_bhEditTimer) clearTimeout(_bhEditTimer);
-    _bhEditTimer = setTimeout(function() { _bhUserEditing = false; _bhEditTimer = null; }, 120000);
+    _bhEditTimer = setTimeout(function () { _bhUserEditing = false; _bhEditTimer = null; }, 120000);
 }
 
 async function toggleBusinessHours() {
-    var btn     = document.getElementById('bh-toggle-btn');
-    var enabled = btn.classList.contains('enable');
-    var start   = parseInt(document.getElementById('bh-start').textContent);
-    var end     = parseInt(document.getElementById('bh-end').textContent);
+    var btn    = document.getElementById('bh-toggle-btn');
+    var enable = btn.classList.contains('off'); /* off = currently disabled → we want to enable */
+    var start  = parseInt(document.getElementById('bh-start').textContent);
+    var end    = parseInt(document.getElementById('bh-end').textContent);
 
     if (isNaN(start) || isNaN(end)) { alert('Invalid hour values.'); return; }
     if (start === end) { alert('"From" and "To" must be different hours.'); return; }
@@ -181,7 +202,7 @@ async function toggleBusinessHours() {
         var res = await fetch('/api/business-hours', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: enabled, start: start, end: end })
+            body: JSON.stringify({ enabled: enable, start: start, end: end })
         });
         if (res.ok) {
             _bhUserEditing = false;
@@ -191,41 +212,52 @@ async function toggleBusinessHours() {
     } catch (err) { console.error(err); }
 }
 
+/* ── Main render ── */
 function renderDashboard(data) {
     var services = data.services;
     var meta     = data.meta;
+    var running  = meta.check_running;
 
-    var oel  = document.getElementById('overall-status');
-    var ocfg = getStatusConfig(meta.overall_status);
-    oel.className   = 'overall-status ' + meta.overall_status;
-    oel.textContent = ocfg.icon + ' ' + ocfg.label;
+    /* ── Overall status banner ── */
+    var oel         = document.getElementById('overall-status');
+    var displaySt   = running ? 'checking' : meta.overall_status;
+    var bdata       = _BANNER[displaySt] || _BANNER.unknown;
+    oel.className   = 'banner' + (bdata.cls ? ' ' + bdata.cls : '');
+    oel.innerHTML   = '<span class="dot"></span><span>' + bdata.text + '</span>';
 
-    var running = meta.check_running;
+    /* ── Button + polling ── */
     _applyRunningState(running);
-    _wasRunning = running;
 
+    /* ── Auto-ping button ── */
     var apb = document.getElementById('auto-ping-btn');
-    if (meta.auto_ping_enabled) { apb.className = 'btn active';   apb.textContent = '⏱ Auto-Ping: ON';  }
-    else                        { apb.className = 'btn inactive'; apb.textContent = '⏱ Auto-Ping: OFF'; }
+    if (meta.auto_ping_enabled) {
+        apb.className = 'btn-ghost on';
+        apb.innerHTML = _ICO_CLOCK + ' Auto-Ping: ON';
+    } else {
+        apb.className = 'btn-ghost';
+        apb.innerHTML = _ICO_CLOCK + ' Auto-Ping: OFF';
+    }
 
-    document.querySelectorAll('.interval-btn').forEach(function(b) {
+    /* ── Interval pills ── */
+    document.querySelectorAll('.pill[data-interval]').forEach(function (b) {
         var val = parseInt(b.getAttribute('data-interval'));
         b.classList.toggle('active', val === meta.ping_interval);
         b.disabled = !meta.auto_ping_enabled;
     });
 
+    /* ── Check info line ── */
     var ci = document.getElementById('check-info');
     if (running) {
-        ci.textContent = '⟳ Check in progress…';
+        ci.textContent = 'Check in progress…';
     } else if (meta.last_check) {
         var ago      = timeAgo(meta.last_check);
         var intLabel = intervalLabel(meta.ping_interval);
         if (meta.auto_ping_enabled) {
             var elapsed   = (Date.now() - new Date(meta.last_check).getTime()) / 1000;
             var remainSec = Math.max(0, meta.ping_interval - elapsed);
-            var rt = remainSec >= 86400 ? Math.round(remainSec/86400)+'d'
-                   : remainSec >= 3600  ? Math.round(remainSec/3600)+'h'
-                   : Math.round(remainSec/60)+' min';
+            var rt = remainSec >= 86400 ? Math.round(remainSec / 86400) + 'd'
+                   : remainSec >= 3600  ? Math.round(remainSec / 3600)  + 'h'
+                   : Math.round(remainSec / 60) + ' min';
             ci.textContent = 'Last check: ' + ago + ' · Next in: ~' + rt + ' · Interval: ' + intLabel;
         } else {
             ci.textContent = 'Last check: ' + ago + ' · Auto-ping disabled';
@@ -234,81 +266,90 @@ function renderDashboard(data) {
         ci.textContent = 'No checks yet · Interval: ' + intervalLabel(meta.ping_interval);
     }
 
+    /* ── Service cards ── */
     var grid = document.getElementById('services-grid');
     if (services.length === 0) {
         grid.innerHTML = '<div class="loading">No services configured. Add one below.</div>';
     } else {
-        grid.innerHTML = services.map(function(svc) {
+        grid.innerHTML = services.map(function (svc) {
             var isEnabled = svc.enabled !== false;
-            var isSelf = svc.url.indexOf(window.location.origin) === 0;
-            var effectiveStatus = isEnabled ? svc.status : 'disabled';
-            var cfg      = getStatusConfig(effectiveStatus);
+            var isSelf    = svc.url.indexOf(window.location.origin) === 0;
+
+            var statusCls = isEnabled ? (_SVC_CLS[svc.status] != null ? _SVC_CLS[svc.status] : '') : 'dis';
+            var cardCls   = 'svc' + (statusCls ? ' ' + statusCls : '');
+
             var upPct    = svc.uptime_percent !== null ? svc.uptime_percent.toFixed(1) : '—';
-            var upColor  = svc.uptime_percent !== null ? uptimeColor(svc.uptime_percent) : '#484f58';
-            var upWidth  = svc.uptime_percent !== null ? svc.uptime_percent : 0;
+            var upWidth  = svc.uptime_percent !== null ? svc.uptime_percent.toFixed(1) : 0;
+            var msText   = rtText(svc.response_time_ms);
+
             var nameHtml = svc.frontend_url
                 ? '<a href="' + escapeHtml(svc.frontend_url) + '" target="_blank" rel="noopener noreferrer">'
-                  + escapeHtml(svc.name) + ' <span class="link-arrow">↗</span></a>'
+                  + escapeHtml(svc.name) + '</a>'
                 : escapeHtml(svc.name);
-            var disabledBadge = isEnabled ? '' : ' <span class="disabled-badge">disabled</span>';
-            var backendHtml = '<span class="backend-label">Backend:</span> '
-                + '<a href="' + escapeHtml(svc.url) + '" target="_blank" rel="noopener noreferrer" class="backend-link">'
-                + escapeHtml(svc.url) + '</a>';
-            var toggleBtn = isSelf
-                ? ''
-                : '<button id="toggle-btn-' + svc.id + '" class="service-toggle' + (isEnabled ? ' on' : ' off') + '" '
-                  + 'onclick="toggleServiceEnabled(\'' + svc.id + '\')" '
-                  + 'title="' + (isEnabled ? 'Active — click to disable' : 'Disabled — click to enable') + '">'
-                  + '<span class="toggle-knob"></span></button>';
-            var checkBtn = isEnabled
-                ? '<button id="check-btn-' + svc.id + '" class="btn-icon" onclick="checkService(\'' + svc.id + '\')" title="Check now">⟳</button>'
-                : '<button class="btn-icon" disabled title="Enable service before checking">⟳</button>';
-            var cardCls = 'service-card' + (isEnabled ? '' : ' disabled');
-            return '<div class="' + cardCls + '">'
-                + '<div class="status-icon">' + cfg.icon + '</div>'
-                + '<div class="service-info">'
-                +   '<div class="service-name">' + nameHtml + disabledBadge + '</div>'
-                +   '<div class="service-backend">' + backendHtml + '</div>'
+
+            var toggleHtml = isSelf ? '' :
+                '<button id="toggle-btn-' + svc.id + '"'
+                + ' class="switch' + (isEnabled ? '' : ' off') + '"'
+                + ' type="button"'
+                + ' onclick="toggleServiceEnabled(\'' + svc.id + '\')"'
+                + ' title="' + (isEnabled ? 'Active — click to disable' : 'Disabled — click to enable') + '">'
+                + '</button>';
+
+            var checkHtml = isEnabled
+                ? '<button id="check-btn-' + svc.id + '" class="icon-btn" type="button"'
+                  + ' onclick="checkService(\'' + svc.id + '\')" title="Check now">'
+                  + _ICO_SPIN + '</button>'
+                : '<button class="icon-btn" type="button" disabled title="Enable service before checking">'
+                  + _ICO_SPIN + '</button>';
+
+            return '<article class="' + cardCls + '">'
+                + '<div class="svc-left">'
+                +   '<span class="svc-dot"></span>'
+                +   '<div class="svc-info">'
+                +     '<span class="svc-name">' + nameHtml + '</span>'
+                +     '<a class="svc-url" href="' + escapeHtml(svc.url) + '" target="_blank" rel="noopener noreferrer">'
+                +       escapeHtml(svc.url)
+                +     '</a>'
+                +   '</div>'
                 + '</div>'
-                + '<div class="service-meta">'
-                +   '<div class="response-time ' + rtClass(svc.response_time_ms) + '">' + rtText(svc.response_time_ms) + '</div>'
-                +   '<div class="uptime-bar"><div class="uptime-fill" style="width:' + upWidth + '%;background:' + upColor + '"></div></div>'
-                +   '<div class="uptime-text">Uptime: ' + upPct + '%</div>'
+                + '<div class="svc-right">'
+                +   '<div class="svc-metrics">'
+                +     '<div class="svc-ms">' + msText + '</div>'
+                +     '<div class="svc-uptime">Uptime ' + upPct + '%</div>'
+                +     '<div class="svc-bar"><i style="width:' + upWidth + '%"></i></div>'
+                +   '</div>'
+                +   toggleHtml
+                +   checkHtml
+                +   '<button class="icon-btn danger" type="button"'
+                +   ' onclick="deleteService(\'' + svc.id + '\')" title="Remove">'
+                +   _ICO_REMOVE + '</button>'
                 + '</div>'
-                + '<div class="service-actions">'
-                +   toggleBtn
-                +   checkBtn
-                +   '<button class="btn-icon delete" onclick="deleteService(\'' + svc.id + '\')" title="Delete">✕</button>'
-                + '</div>'
-                + '</div>';
+                + '</article>';
         }).join('');
     }
 
+    /* ── Business hours ── */
     if (!_bhUserEditing) {
         document.getElementById('bh-start').textContent = meta.business_hours_start;
         document.getElementById('bh-end').textContent   = meta.business_hours_end;
     }
 
-    var bhEnabled = meta.business_hours_enabled;
-    var bhBadge   = document.getElementById('bh-badge');
-    var bhToggle  = document.getElementById('bh-toggle-btn');
-
-    var bhStartVal = meta.business_hours_start;
-    var bhEndVal   = meta.business_hours_end;
-    var bhLabel    = bhStartVal < bhEndVal
-        ? bhStartVal + ':00 – ' + bhEndVal + ':00 CET'
-        : bhStartVal + ':00 – ' + bhEndVal + ':00 CET (+1d)';
+    var bhEnabled  = meta.business_hours_enabled;
+    var bhBadge    = document.getElementById('bh-badge');
+    var bhToggle   = document.getElementById('bh-toggle-btn');
+    var bhStart    = meta.business_hours_start;
+    var bhEnd      = meta.business_hours_end;
+    var bhTimeLabel = bhStart + ':00–' + bhEnd + ':00'
+                    + (bhStart >= bhEnd ? ' (+1d)' : '');
 
     if (bhEnabled) {
-        bhBadge.className    = 'bh-badge on';
-        bhBadge.textContent  = 'ON · ' + bhLabel;
-        bhToggle.className   = 'btn-bh-toggle disable';
-        bhToggle.textContent = 'Disable';
+        bhBadge.className   = 'bh-badge on';
+        bhBadge.textContent = 'ON · ' + bhTimeLabel;
+        bhToggle.className  = 'switch sm';
     } else {
-        bhBadge.className    = 'bh-badge off';
-        bhBadge.textContent  = 'OFF';
-        bhToggle.className   = 'btn-bh-toggle enable';
-        bhToggle.textContent = 'Enable';
+        bhBadge.className   = 'bh-badge off';
+        bhBadge.textContent = 'OFF';
+        bhToggle.className  = 'switch sm off';
     }
 }
 
