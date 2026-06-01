@@ -38,7 +38,7 @@ services:
           {"name": "KSeF Master",    "url": "https://ksef-master-backend.onrender.com/health",          "frontend_url": "https://ksef-master.netlify.app/"},
           {"name": "Postlio",        "url": "https://postlio-backend.onrender.com/health",               "frontend_url": "https://postlio.netlify.app/"},
           {"name": "Shellty Blog",   "url": "https://shellty-blog.onrender.com/health",                  "frontend_url": "https://shellty-blog.onrender.com/"},
-          {"name": "SmartQuote AI",  "url": "https://smartquote-backend-fzh5.onrender.com/api/health",   "frontend_url": "https://smartquote-ai.netlify.app/"},
+          {"name": "SmartQuote AI",  "url": "https://smartquote-backend-fzh5.onrender.com/api/health",   "frontend_url": "https://smart-quote-ai.vercel.app"},
           {"name": "Shellty Kanban", "url": "https://shellty-kanban.onrender.com/health",                "frontend_url": "https://kanban.shellty.it"},
           {"name": "Shellty Pulse",  "url": "http://localhost:5000/health"}
         ]
