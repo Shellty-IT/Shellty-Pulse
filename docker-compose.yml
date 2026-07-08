@@ -40,6 +40,7 @@ services:
           {"name": "Shellty Blog",   "url": "https://shellty-blog.onrender.com/health",                  "frontend_url": "https://shellty-blog.onrender.com/"},
           {"name": "SmartQuote AI",  "url": "https://smartquote-backend-fzh5.onrender.com/api/health",   "frontend_url": "https://smart-quote.shellty.pl"},
           {"name": "Shellty Kanban", "url": "https://shellty-kanban.onrender.com/health",                "frontend_url": "https://kanban.shellty.pl"},
+          {"name": "Shellty Prompt Coach", "url": "https://shellty-prompt-coach.onrender.com/health",     "frontend_url": "https://prompt-coach.shellty.pl"},
           {"name": "Shellty Pulse",  "url": "http://localhost:5000/health"},
           {"name": "Tomi Forno",     "url": "https://tomi-forno.onrender.com",                            "frontend_url": "https://tomi-forno.shellty.pl"}
         ]
