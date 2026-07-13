@@ -41,7 +41,7 @@ services:
           {"name": "SmartQuote AI",  "url": "https://smartquote-backend-fzh5.onrender.com/api/health",   "frontend_url": "https://smart-quote.shellty.pl"},
           {"name": "Shellty Kanban", "url": "https://shellty-kanban.onrender.com/health",                "frontend_url": "https://kanban.shellty.pl"},
           {"name": "Shellty Prompt Coach", "url": "https://shellty-prompt-coach.onrender.com/health",     "frontend_url": "https://prompt-coach.shellty.pl"},
-          {"name": "Shellty Pulse",  "url": "http://158.178.158.89:5000/health", "frontend_url": "http://158.178.158.89:5000/"},
+          {"name": "Shellty Pulse",  "url": "https://pulse.shellty.pl/health", "frontend_url": "https://pulse.shellty.pl/"},
           {"name": "Tomi Forno",     "url": "https://tomi-forno.onrender.com/health",                     "frontend_url": "https://tomi-forno.shellty.pl"}
         ]
 
