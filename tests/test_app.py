@@ -81,6 +81,15 @@ class TestDashboard:
         r = client.get("/")
         assert b"Shellty Pulse" in r.data
 
+    def test_dashboard_includes_social_metadata(self, client):
+        r = client.get("/")
+        page = r.get_data(as_text=True)
+
+        assert '<link rel="canonical" href="https://pulse.shellty.pl/">' in page
+        assert 'property="og:image" content="https://pulse.shellty.pl/static/shellty-pulse-og.jpg"' in page
+        assert 'property="og:image:type" content="image/jpeg"' in page
+        assert 'name="twitter:card" content="summary_large_image"' in page
+
 
 # ── GET /api/services ────────────────────────────────────────────────────────
 
